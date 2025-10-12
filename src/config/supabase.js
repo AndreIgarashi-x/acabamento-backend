@@ -5,32 +5,39 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY;
+const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Variáveis SUPABASE_URL e SUPABASE_ANON_KEY são obrigatórias');
+// Para backend, SERVICE_KEY é obrigatória (bypass RLS)
+const supabaseKey = supabaseServiceKey || supabaseAnonKey;
+
+if (!supabaseUrl || !supabaseKey) {
+  console.error('❌ ERRO: Variáveis de ambiente faltando!');
+  console.error('SUPABASE_URL:', supabaseUrl ? '✅ OK' : '❌ FALTANDO');
+  console.error('SUPABASE_SERVICE_KEY:', supabaseServiceKey ? '✅ OK' : '❌ FALTANDO');
+  console.error('SUPABASE_ANON_KEY:', supabaseAnonKey ? '✅ OK' : '❌ FALTANDO');
+  throw new Error('Variáveis SUPABASE_URL e pelo menos uma chave são obrigatórias');
 }
 
-// Cliente padrão (com anon key - para operações comuns)
-const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+// Cliente admin com Service Key (bypass RLS)
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey || supabaseAnonKey, {
   auth: {
-    autoRefreshToken: true,
+    autoRefreshToken: false,
     persistSession: false
   }
 });
 
-// Cliente administrativo (com service key - para operações privilegiadas)
-const supabaseAdmin = supabaseServiceKey 
-  ? createClient(supabaseUrl, supabaseServiceKey, {
+// Cliente público com Anon Key (usa RLS) - se disponível
+const supabasePublic = supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
-        autoRefreshToken: false,
+        autoRefreshToken: true,
         persistSession: false
       }
     })
-  : null;
+  : supabaseAdmin;
 
 module.exports = {
-  supabase,
-  supabaseAdmin
+  supabaseAdmin,
+  supabasePublic
 };
