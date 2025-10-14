@@ -34,6 +34,9 @@ const PORT = process.env.PORT || 3000;
 // MIDDLEWARES GLOBAIS
 // =====================================================
 
+// Trust proxy (necessário para Railway, Heroku, etc.)
+app.set('trust proxy', 1);
+
 // Segurança
 app.use(helmet());
 
