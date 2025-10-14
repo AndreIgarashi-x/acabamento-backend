@@ -19,21 +19,40 @@ const upload = multer({
   }
 });
 
-// Listar OFs
+// Listar OFs (com contagem de atividades)
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { status } = req.query;
+
+    // Buscar OFs
     let query = supabaseAdmin.from('ofs').select('*');
 
     if (status) {
       query = query.eq('status', status);
     }
 
-    const { data, error } = await query.order('created_at', { ascending: false });
+    const { data: ofs, error } = await query.order('created_at', { ascending: false });
 
     if (error) throw error;
 
-    res.json({ success: true, data });
+    // Para cada OF, contar atividades
+    const ofsComContagem = await Promise.all(
+      ofs.map(async (of) => {
+        const { count, error: countError } = await supabaseAdmin
+          .from('activities')
+          .select('*', { count: 'exact', head: true })
+          .eq('of_id', of.id);
+
+        if (countError) {
+          console.error(`Erro ao contar atividades da OF ${of.codigo}:`, countError);
+          return { ...of, total_atividades: 0 };
+        }
+
+        return { ...of, total_atividades: count || 0 };
+      })
+    );
+
+    res.json({ success: true, data: ofsComContagem });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -134,6 +153,69 @@ router.put('/:id',
       if (error) throw error;
 
       res.json({ success: true, data });
+
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  }
+);
+
+// Concluir OF
+router.patch('/:id/concluir',
+  authenticateToken,
+  requireRole('admin'),
+  [
+    param('id').isUUID()
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ success: false, errors: errors.array() });
+    }
+
+    try {
+      const { id } = req.params;
+
+      // Verificar se OF existe
+      const { data: existing, error: findError } = await supabaseAdmin
+        .from('ofs')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (findError || !existing) {
+        return res.status(404).json({
+          success: false,
+          message: 'OF não encontrada'
+        });
+      }
+
+      // Verificar se já está concluída
+      if (existing.status === 'concluida') {
+        return res.status(400).json({
+          success: false,
+          message: 'OF já está concluída'
+        });
+      }
+
+      // Atualizar status para concluída
+      const { data, error } = await supabaseAdmin
+        .from('ofs')
+        .update({
+          status: 'concluida',
+          data_conclusao: new Date().toISOString()
+        })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      res.json({
+        success: true,
+        message: 'OF concluída com sucesso',
+        data
+      });
 
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -324,31 +406,77 @@ router.post('/import-confirm',
     try {
       const { ofs } = req.body;
 
-      console.log(`📦 Importando ${ofs.length} OFs em lote...`);
+      console.log(`📦 Processando ${ofs.length} OFs em lote (importação inteligente)...`);
 
       const ofsCriadas = [];
+      const ofsAtualizadas = [];
       const erros = [];
 
       for (const of of ofs) {
         try {
-          const insertData = {
-            codigo: of.codigo,
-            quantidade: of.quantidade,
-            status: 'aberta'
-          };
-
-          if (of.referencia) insertData.referencia = of.referencia;
-          if (of.descricao) insertData.descricao = of.descricao;
-
-          const { data, error } = await supabaseAdmin
+          // Buscar OF existente pelo código
+          const { data: existing, error: findError } = await supabaseAdmin
             .from('ofs')
-            .insert(insertData)
-            .select()
-            .single();
+            .select('*')
+            .eq('codigo', of.codigo)
+            .maybeSingle();
 
-          if (error) throw error;
+          if (findError) throw findError;
 
-          ofsCriadas.push(data);
+          if (existing) {
+            // OF EXISTE - Atualizar
+            console.log(`🔄 Atualizando OF ${of.codigo}`);
+
+            const updateData = {
+              quantidade: of.quantidade
+            };
+
+            // Atualizar referência e descrição se mudou
+            if (of.referencia) updateData.referencia = of.referencia;
+            if (of.descricao) updateData.descricao = of.descricao;
+
+            // Se estava concluída, reabrir
+            if (existing.status === 'concluida') {
+              updateData.status = 'aberta';
+              updateData.data_conclusao = null;
+              console.log(`  ↪️ OF ${of.codigo} estava concluída, reabrindo...`);
+            }
+
+            const { data: updated, error: updateError } = await supabaseAdmin
+              .from('ofs')
+              .update(updateData)
+              .eq('id', existing.id)
+              .select()
+              .single();
+
+            if (updateError) throw updateError;
+
+            ofsAtualizadas.push(updated);
+
+          } else {
+            // OF NÃO EXISTE - Criar nova
+            console.log(`✨ Criando nova OF ${of.codigo}`);
+
+            const insertData = {
+              codigo: of.codigo,
+              quantidade: of.quantidade,
+              status: 'aberta'
+            };
+
+            if (of.referencia) insertData.referencia = of.referencia;
+            if (of.descricao) insertData.descricao = of.descricao;
+
+            const { data: created, error: insertError } = await supabaseAdmin
+              .from('ofs')
+              .insert(insertData)
+              .select()
+              .single();
+
+            if (insertError) throw insertError;
+
+            ofsCriadas.push(created);
+          }
+
         } catch (error) {
           erros.push({
             codigo: of.codigo,
@@ -357,15 +485,17 @@ router.post('/import-confirm',
         }
       }
 
-      console.log(`✅ ${ofsCriadas.length} OFs criadas com sucesso`);
+      console.log(`✅ ${ofsCriadas.length} OFs criadas`);
+      console.log(`🔄 ${ofsAtualizadas.length} OFs atualizadas`);
       console.log(`❌ ${erros.length} OFs com erro`);
 
       res.json({
         success: true,
         data: {
           criadas: ofsCriadas.length,
+          atualizadas: ofsAtualizadas.length,
           erros: erros.length,
-          detalhes: { ofsCriadas, erros }
+          detalhes: { ofsCriadas, ofsAtualizadas, erros }
         }
       });
 
