@@ -333,35 +333,18 @@ router.post('/import-pdf',
 
           // Validar
           if (codigo && quantidade > 0) {
-            // Verificar se OF já existe
-            const { data: existing } = await supabaseAdmin
-              .from('ofs')
-              .select('id, codigo')
-              .eq('codigo', codigo)
-              .maybeSingle();
-
-            if (existing) {
-              erros.push({
-                codigo,
-                referencia,
-                descricao,
-                quantidade,
-                motivo: 'OF já existe no sistema'
-              });
-            } else {
-              ofsEncontradas.push({
-                codigo,
-                referencia,
-                descricao,
-                quantidade
-              });
-            }
+            // Incluir todas as OFs válidas (re-importação inteligente irá decidir se cria ou atualiza)
+            ofsEncontradas.push({
+              codigo,
+              referencia,
+              descricao,
+              quantidade
+            });
           }
         }
       }
 
-      console.log(`✅ ${ofsEncontradas.length} OFs encontradas`);
-      console.log(`⚠️ ${erros.length} OFs ignoradas (duplicadas)`);
+      console.log(`✅ ${ofsEncontradas.length} OFs encontradas (novas + existentes)`);
 
       res.json({
         success: true,
