@@ -37,25 +37,52 @@ router.post('/login',
   handleValidationErrors,
   async (req, res) => {
     try {
+      console.log('🔐 === TENTATIVA DE LOGIN ===');
+      console.log('📥 Request body:', JSON.stringify(req.body, null, 2));
+
       const { pin } = req.body;
       const matricula = req.body.matricula.toUpperCase(); // Sempre maiúscula
 
+      console.log('🔍 Matrícula (uppercase):', matricula);
+      console.log('🔍 PIN recebido:', pin);
+      console.log('🔍 PIN length:', pin ? pin.length : 0);
+
       // 1. Buscar usuário por matrícula
+      console.log('🔍 Buscando usuário no banco...');
       const { data: user, error: userError } = await supabaseAdmin
         .from('users')
         .select('id, nome, matricula, email, pin_hash, perfil, ativo')
         .eq('matricula', matricula)
         .single();
 
-      if (userError || !user) {
+      if (userError) {
+        console.error('❌ Erro ao buscar usuário:', userError);
         return res.status(401).json({
           success: false,
           message: 'Matrícula ou PIN inválidos'
         });
       }
 
+      if (!user) {
+        console.log('❌ Usuário não encontrado');
+        return res.status(401).json({
+          success: false,
+          message: 'Matrícula ou PIN inválidos'
+        });
+      }
+
+      console.log('✅ Usuário encontrado:', {
+        id: user.id,
+        nome: user.nome,
+        matricula: user.matricula,
+        perfil: user.perfil,
+        ativo: user.ativo,
+        pin_hash_length: user.pin_hash ? user.pin_hash.length : 0
+      });
+
       // 2. Verificar se usuário está ativo
       if (!user.ativo) {
+        console.log('❌ Usuário inativo');
         return res.status(403).json({
           success: false,
           message: 'Usuário inativo. Contate o administrador.'
@@ -63,27 +90,39 @@ router.post('/login',
       }
 
       // 3. Verificar PIN
+      console.log('🔐 Comparando PIN...');
+      console.log('   - PIN informado:', pin);
+      console.log('   - PIN hash no banco:', user.pin_hash);
+
       const pinValido = await bcrypt.compare(pin, user.pin_hash);
+      console.log('🔐 Resultado bcrypt.compare:', pinValido);
+
       if (!pinValido) {
+        console.log('❌ PIN inválido!');
         return res.status(401).json({
           success: false,
           message: 'Matrícula ou PIN inválidos'
         });
       }
 
+      console.log('✅ PIN válido!');
+
       // 4. Gerar JWT
+      console.log('🔑 Gerando JWT token...');
       const token = jwt.sign(
-        { 
-          id: user.id, 
+        {
+          id: user.id,
           matricula: user.matricula,
-          perfil: user.perfil 
+          perfil: user.perfil
         },
         process.env.JWT_SECRET,
         { expiresIn: process.env.JWT_EXPIRES_IN || '12h' }
       );
 
+      console.log('✅ Token gerado com sucesso');
+
       // 5. Retornar dados do usuário + token
-      res.json({
+      const response = {
         success: true,
         message: 'Login realizado com sucesso',
         data: {
@@ -96,10 +135,15 @@ router.post('/login',
           },
           token
         }
-      });
+      };
+
+      console.log('📤 Enviando resposta de sucesso');
+      console.log('📤 User data:', response.data.user);
+      res.json(response);
 
     } catch (error) {
-      console.error('Erro no login:', error);
+      console.error('❌ ERRO FATAL NO LOGIN:', error);
+      console.error('Stack trace:', error.stack);
       res.status(500).json({
         success: false,
         message: 'Erro ao realizar login',

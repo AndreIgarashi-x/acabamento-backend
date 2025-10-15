@@ -168,30 +168,54 @@ router.patch('/:id/concluir',
     param('id').isUUID()
   ],
   async (req, res) => {
+    console.log('🔍 === TENTATIVA DE CONCLUIR OF ===');
+    console.log('📥 Params:', req.params);
+    console.log('👤 User:', req.user);
+
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.log('❌ Erros de validação:', errors.array());
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
     try {
       const { id } = req.params;
+      console.log('🔍 ID da OF:', id);
 
       // Verificar se OF existe
+      console.log('🔍 Buscando OF no banco...');
       const { data: existing, error: findError } = await supabaseAdmin
         .from('ofs')
         .select('*')
         .eq('id', id)
         .single();
 
-      if (findError || !existing) {
+      if (findError) {
+        console.error('❌ Erro ao buscar OF:', findError);
+        return res.status(404).json({
+          success: false,
+          message: 'OF não encontrada',
+          error: findError.message
+        });
+      }
+
+      if (!existing) {
+        console.log('❌ OF não encontrada');
         return res.status(404).json({
           success: false,
           message: 'OF não encontrada'
         });
       }
 
+      console.log('✅ OF encontrada:', {
+        id: existing.id,
+        codigo: existing.codigo,
+        status: existing.status
+      });
+
       // Verificar se já está concluída
       if (existing.status === 'concluida') {
+        console.log('⚠️ OF já está concluída');
         return res.status(400).json({
           success: false,
           message: 'OF já está concluída'
@@ -199,17 +223,28 @@ router.patch('/:id/concluir',
       }
 
       // Atualizar status para concluída
+      console.log('🔄 Atualizando status para concluída...');
+      const updateData = {
+        status: 'concluida',
+        data_conclusao: new Date().toISOString()
+      };
+      console.log('📦 Update data:', updateData);
+
       const { data, error } = await supabaseAdmin
         .from('ofs')
-        .update({
-          status: 'concluida',
-          data_conclusao: new Date().toISOString()
-        })
+        .update(updateData)
         .eq('id', id)
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Erro ao atualizar OF:', error);
+        console.error('Erro completo:', JSON.stringify(error, null, 2));
+        throw error;
+      }
+
+      console.log('✅ OF concluída com sucesso!');
+      console.log('📦 Dados atualizados:', data);
 
       res.json({
         success: true,
@@ -218,7 +253,17 @@ router.patch('/:id/concluir',
       });
 
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('❌ ERRO FATAL AO CONCLUIR OF:', error);
+      console.error('Tipo do erro:', error.name);
+      console.error('Mensagem:', error.message);
+      console.error('Stack trace:', error.stack);
+
+      res.status(500).json({
+        success: false,
+        message: error.message,
+        errorType: error.name,
+        errorDetails: error
+      });
     }
   }
 );

@@ -41,8 +41,27 @@ app.set('trust proxy', 1);
 app.use(helmet());
 
 // CORS (ajustar origins em produção)
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://acabamento-frontend.vercel.app'
+];
+
+// Adicionar FRONTEND_URL se definido
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: function (origin, callback) {
+    // Permitir requisições sem origin (mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
   credentials: true
 }));
 

@@ -1,0 +1,165 @@
+###############################################
+# API TESTS - App Cronometragem Acabamento
+# Como usar: Clique em "Send Request" acima de cada requisição
+###############################################
+
+@baseUrl = http://localhost:3000
+@token = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6Ijk1ZjNhZTdiLTNlNmYtNDNjMi05YzY3LTYwMjE0YTNhMDk2YyIsIm1hdHJpY3VsYSI6IkFORFJFMDAxIiwicGVyZmlsIjoiYWRtaW4iLCJpYXQiOjE3NjAxMzc1NzYsImV4cCI6MTc2MDE4MDc3Nn0.MxweG4yjvCLOhO9cqb2Qv0U2AntEj6lkvF0MSv1CElw
+
+###############################################
+# 1. HEALTH CHECK
+###############################################
+
+### Health Check
+GET {{baseUrl}}/health
+
+###############################################
+# 2. AUTENTICAÇÃO
+###############################################
+
+### Criar Usuário Admin (André)
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "nome": "Andre Jesus",
+  "matricula": "ANDRE001",
+  "pin": "123456",
+  "perfil": "admin"
+}
+
+### Login
+POST {{baseUrl}}/api/auth/login
+Content-Type: application/json
+
+{
+  "matricula": "ANDRE001",
+  "pin": "123456"
+}
+
+### Criar Colaborador (Teste)
+POST {{baseUrl}}/api/auth/register
+Content-Type: application/json
+
+{
+  "nome": "Maria Silva",
+  "matricula": "COLAB001",
+  "pin": "123456",
+  "perfil": "colaborador"
+}
+
+###############################################
+# 3. PROCESSOS
+###############################################
+
+### Listar Processos
+GET {{baseUrl}}/api/processes
+Authorization: Bearer {{token}}
+
+###############################################
+# 4. OFs (ORDENS DE FABRICAÇÃO)
+###############################################
+
+### Listar OFs
+GET {{baseUrl}}/api/ofs
+Authorization: Bearer {{token}}
+
+### Criar OF
+POST {{baseUrl}}/api/ofs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "codigo": "12345",
+  "quantidade": 100
+}
+
+### Criar mais OFs para teste
+POST {{baseUrl}}/api/ofs
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "codigo": "12346",
+  "quantidade": 50
+}
+
+###############################################
+# 5. ATIVIDADES (CRONOMETRAGEM)
+###############################################
+
+### Iniciar Atividade
+# IMPORTANTE: Substitua os IDs pelos IDs reais do seu banco!
+# user_id: pegar do login
+# process_id: pegar da lista de processos
+# of_id: pegar da lista de OFs
+POST {{baseUrl}}/api/activities/start
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "user_id": "95f3ae7b-3e6f-43c2-9c67-60214a3a096c",
+     "process_id": "0010257d-a929-4cc9-920c-28bb6485209b",
+     "of_id": "39a27ba5-6b4e-4258-9671-df6d201fbce6",
+     "qty_planejada": 10,
+     "device_id": "web-browser"
+}
+
+### Buscar Sessão Ativa de um Usuário
+GET {{baseUrl}}/api/activities/active/cole-user-id-aqui
+Authorization: Bearer {{token}}
+
+### Pausar Atividade
+POST {{baseUrl}}/api/activities/cole-activity-id-aqui/pause
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "motivo": "Pausa para café"
+}
+
+### Retomar Atividade
+POST {{baseUrl}}/api/activities/cole-activity-id-aqui/resume
+Authorization: Bearer {{token}}
+
+### Finalizar Atividade
+POST {{baseUrl}}/api/activities/837c7bd5-08e9-475f-84c8-5b9ca35d6fcc/finish
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "qty_realizada": 8,
+  "qty_refugo": 2,
+  "motivo_refugo": "Defeito no tecido"
+}
+
+###############################################
+# 6. DASHBOARD
+###############################################
+
+### Dashboard Live (Sessões Ativas)
+GET {{baseUrl}}/api/dashboard/live
+Authorization: Bearer {{token}}
+
+###############################################
+# 7. ANALYTICS (em desenvolvimento)
+###############################################
+
+### Analytics Summary
+GET {{baseUrl}}/api/analytics/summary
+Authorization: Bearer {{token}}
+
+###############################################
+# 8. RELATÓRIOS (em desenvolvimento)
+###############################################
+
+### Listar Relatórios
+GET {{baseUrl}}/api/reports
+Authorization: Bearer {{token}}
+
+###############################################
+# NOTAS:
+# 1. Após fazer login, copie o TOKEN e cole no topo (@token = ...)
+# 2. Após criar OFs e Processos, copie os IDs e use nas atividades
+# 3. Clique em "Send Request" para executar cada teste
+###############################################
