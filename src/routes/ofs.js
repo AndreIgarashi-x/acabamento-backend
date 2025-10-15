@@ -225,8 +225,7 @@ router.patch('/:id/concluir',
       // Atualizar status para concluída
       console.log('🔄 Atualizando status para concluída...');
       const updateData = {
-        status: 'concluida',
-        data_conclusao: new Date().toISOString()
+        status: 'concluida'
       };
       console.log('📦 Update data:', updateData);
 
