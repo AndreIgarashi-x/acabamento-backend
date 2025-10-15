@@ -37,7 +37,8 @@ router.post('/login',
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { matricula, pin } = req.body;
+      const { pin } = req.body;
+      const matricula = req.body.matricula.toUpperCase(); // Sempre maiúscula
 
       // 1. Buscar usuário por matrícula
       const { data: user, error: userError } = await supabaseAdmin
@@ -124,7 +125,8 @@ router.post('/register',
   handleValidationErrors,
   async (req, res) => {
     try {
-      const { nome, matricula, email, pin, perfil } = req.body;
+      const { nome, email, pin, perfil } = req.body;
+      const matricula = req.body.matricula.toUpperCase(); // Sempre maiúscula
 
       // 1. Verificar se matrícula já existe
       const { data: existing } = await supabaseAdmin
