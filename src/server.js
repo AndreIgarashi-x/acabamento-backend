@@ -22,6 +22,7 @@ const activityRoutes = require('./routes/activities');
 const dashboardRoutes = require('./routes/dashboard');
 const analyticsRoutes = require('./routes/analytics');
 const reportRoutes = require('./routes/reports');
+const assistantRoutes = require('./routes/assistant');
 
 // Middlewares customizados
 const errorHandler = require('./middlewares/errorHandler');
@@ -135,6 +136,9 @@ app.use('/api/analytics', analyticsRoutes);
 
 // Relatórios
 app.use('/api/reports', reportRoutes);
+
+// Assistente IA
+app.use('/api/assistant', assistantRoutes);
 
 // =====================================================
 // ROTA 404
