@@ -6,12 +6,24 @@ const OpenAI = require('openai');
 const { supabaseAdmin } = require('../config/supabase');
 
 // =====================================================
-// Configuração OpenAI
+// Configuração OpenAI (Lazy initialization)
 // =====================================================
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+let openai = null;
+
+function getOpenAIClient() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY não configurada');
+  }
+
+  if (!openai) {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY
+    });
+  }
+
+  return openai;
+}
 
 // =====================================================
 // System Prompt - Instruções para o GPT
@@ -114,7 +126,7 @@ async function analyzeQuery(userQuery) {
   try {
     console.log('🤖 Analisando pergunta com GPT:', userQuery);
 
-    const completion = await openai.chat.completions.create({
+    const completion = const client = getOpenAIClient(); const completion = await client.chat.completions.create({
       model: 'gpt-3.5-turbo', // Modelo mais econômico e rápido
       messages: [
         { role: 'system', content: systemPrompt },
@@ -582,7 +594,7 @@ async function formulateResponse(userQuery, data) {
       ? `Dados encontrados:\n${JSON.stringify(data, null, 2)}`
       : `Dados não encontrados: ${data.message}`;
 
-    const completion = await openai.chat.completions.create({
+    const completion = const client = getOpenAIClient(); const completion = await client.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [
         {
