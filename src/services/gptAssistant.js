@@ -126,7 +126,8 @@ async function analyzeQuery(userQuery) {
   try {
     console.log('🤖 Analisando pergunta com GPT:', userQuery);
 
-    const completion = const client = getOpenAIClient(); const completion = await client.chat.completions.create({
+    const client = getOpenAIClient();
+    const completion = await client.chat.completions.create({
       model: 'gpt-3.5-turbo', // Modelo mais econômico e rápido
       messages: [
         { role: 'system', content: systemPrompt },
@@ -594,7 +595,8 @@ async function formulateResponse(userQuery, data) {
       ? `Dados encontrados:\n${JSON.stringify(data, null, 2)}`
       : `Dados não encontrados: ${data.message}`;
 
-    const completion = const client = getOpenAIClient(); const completion = await client.chat.completions.create({
+    const client = getOpenAIClient();
+    const completion = await client.chat.completions.create({
       model: 'gpt-3.5-turbo',
       messages: [
         {
