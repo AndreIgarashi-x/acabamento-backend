@@ -1,12 +1,3 @@
-/**
- * ARQUIVO DE REFERÊNCIA: Activities com suporte a registro peça a peça
- *
- * INSTRUÇÕES DE USO:
- * 1. Execute a migration: backend/migrations/003_add_peca_a_peca_tracking.sql
- * 2. Substitua o conteúdo de activities.js por este arquivo
- * 3. Ou copie apenas os novos endpoints (registrar-peca e pecas) para o arquivo atual
- */
-
 const express = require('express');
 const router = express.Router();
 const { supabaseAdmin } = require('../config/supabase');
@@ -31,9 +22,9 @@ const handleValidationErrors = (req, res, next) => {
 };
 
 // =====================================================
-// POST /start - INICIAR ATIVIDADE (com suporte a peça a peça)
+// POST /start - INICIAR ATIVIDADE
 // =====================================================
-router.post('/start',
+router.post('/start', 
   authenticateToken,
   startLimiter,
   [
@@ -114,7 +105,7 @@ router.post('/start',
       // 4. Verificar se OF existe e está aberta
       const { data: of, error: ofError } = await supabaseAdmin
         .from('ofs')
-        .select('id, codigo, quantidade, status')
+        .select('id, codigo, status')
         .eq('id', of_id)
         .single();
 
@@ -132,7 +123,7 @@ router.post('/start',
         });
       }
 
-      // 5. Criar a atividade com novos campos para tracking peça a peça
+      // 5. Criar a atividade
       const { data: activity, error: createError } = await supabaseAdmin
         .from('activities')
         .insert({
@@ -141,8 +132,6 @@ router.post('/start',
           of_id,
           qty_planejada,
           status: 'ativa',
-          em_andamento: true,  // NOVO CAMPO
-          pecas_concluidas: 0,  // NOVO CAMPO
           ts_inicio: new Date().toISOString(),
           origem_device_id: device_id || 'unknown',
           audit: JSON.stringify({
@@ -150,7 +139,7 @@ router.post('/start',
             created_at: new Date().toISOString()
           })
         })
-        .select('*, users(nome), processes(nome), ofs(codigo, quantidade)')
+        .select('*, users(nome), processes(nome), ofs(codigo)')
         .single();
 
       if (createError) {
@@ -162,7 +151,7 @@ router.post('/start',
 
       // 6. ATUALIZAR STATUS DA OF PARA "EM_ANDAMENTO"
       console.log('🔄 Atualizando OF para em_andamento:', of_id);
-
+      
       const { error: ofUpdateError } = await supabaseAdmin
         .from('ofs')
         .update({ status: 'em_andamento' })
@@ -185,154 +174,6 @@ router.post('/start',
       res.status(500).json({
         success: false,
         message: 'Erro ao iniciar atividade',
-        error: error.message
-      });
-    }
-  }
-);
-
-// =====================================================
-// POST /:id/registrar-peca - REGISTRAR PEÇA INDIVIDUAL
-// =====================================================
-router.post('/:id/registrar-peca',
-  authenticateToken,
-  [
-    param('id').isUUID().withMessage('ID da atividade deve ser UUID válido'),
-    body('numero_peca').isInt({ min: 1 }).withMessage('numero_peca deve ser >= 1'),
-    body('tempo_decorrido').isInt({ min: 0 }).withMessage('tempo_decorrido deve ser >= 0')
-  ],
-  handleValidationErrors,
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { numero_peca, tempo_decorrido } = req.body;
-
-      console.log('📦 REGISTRANDO PEÇA:', { atividade_id: id, numero_peca, tempo_decorrido });
-
-      // 1. Buscar atividade
-      const { data: activity, error: findError } = await supabaseAdmin
-        .from('activities')
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (findError || !activity) {
-        return res.status(404).json({
-          success: false,
-          message: 'Atividade não encontrada'
-        });
-      }
-
-      // 2. Validar se atividade está ativa
-      if (activity.status !== 'ativa') {
-        return res.status(400).json({
-          success: false,
-          message: `Não é possível registrar peça com atividade ${activity.status}`
-        });
-      }
-
-      // 3. Validar se não está em_andamento = false
-      if (activity.em_andamento === false) {
-        return res.status(400).json({
-          success: false,
-          message: 'Atividade já foi finalizada'
-        });
-      }
-
-      // 4. Validar se não excede quantidade planejada
-      if (numero_peca > activity.qty_planejada) {
-        return res.status(400).json({
-          success: false,
-          message: `Peça ${numero_peca} excede a quantidade planejada (${activity.qty_planejada})`
-        });
-      }
-
-      // 5. Verificar se peça já foi registrada
-      const { data: existingPeca, error: checkError } = await supabaseAdmin
-        .from('pecas_registradas')
-        .select('id')
-        .eq('atividade_id', id)
-        .eq('numero_peca', numero_peca)
-        .maybeSingle();
-
-      if (checkError) throw checkError;
-
-      if (existingPeca) {
-        return res.status(400).json({
-          success: false,
-          message: `Peça ${numero_peca} já foi registrada anteriormente`
-        });
-      }
-
-      // 6. Registrar peça
-      const { data: peca, error: insertError } = await supabaseAdmin
-        .from('pecas_registradas')
-        .insert({
-          atividade_id: id,
-          of_id: activity.of_id,
-          usuario_id: activity.user_id,
-          processo_id: activity.process_id,
-          numero_peca,
-          tempo_decorrido,
-          timestamp_conclusao: new Date().toISOString()
-        })
-        .select()
-        .single();
-
-      if (insertError) {
-        console.error('❌ Erro ao inserir peça:', insertError);
-        throw insertError;
-      }
-
-      // 7. Atualizar contador pecas_concluidas
-      const { data: updatedActivity, error: updateError } = await supabaseAdmin
-        .from('activities')
-        .update({
-          pecas_concluidas: activity.pecas_concluidas + 1
-        })
-        .eq('id', id)
-        .select('pecas_concluidas, qty_planejada')
-        .single();
-
-      if (updateError) throw updateError;
-
-      console.log(`✅ Peça ${numero_peca} registrada! (${updatedActivity.pecas_concluidas}/${updatedActivity.qty_planejada})`);
-
-      // 8. Calcular TPU individual (tempo desta peça)
-      let tempo_individual = tempo_decorrido;
-
-      // Buscar peça anterior para calcular TPU individual
-      if (numero_peca > 1) {
-        const { data: pecaAnterior } = await supabaseAdmin
-          .from('pecas_registradas')
-          .select('tempo_decorrido')
-          .eq('atividade_id', id)
-          .eq('numero_peca', numero_peca - 1)
-          .single();
-
-        if (pecaAnterior) {
-          tempo_individual = tempo_decorrido - pecaAnterior.tempo_decorrido;
-        }
-      }
-
-      res.status(201).json({
-        success: true,
-        message: `Peça ${numero_peca} registrada com sucesso!`,
-        data: {
-          peca_id: peca.id,
-          numero_peca,
-          tempo_individual,
-          tempo_total_decorrido: tempo_decorrido,
-          pecas_concluidas: updatedActivity.pecas_concluidas,
-          pecas_planejadas: updatedActivity.qty_planejada
-        }
-      });
-
-    } catch (error) {
-      console.error('❌ Erro ao registrar peça:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Erro ao registrar peça',
         error: error.message
       });
     }
@@ -448,7 +289,7 @@ router.post('/:id/resume',
       // 2. Finalizar última pausa
       const now = new Date().toISOString();
       const pausas = activity.pausas || [];
-
+      
       if (pausas.length > 0) {
         pausas[pausas.length - 1].ts_fim = now;
       }
@@ -483,14 +324,14 @@ router.post('/:id/resume',
 );
 
 // =====================================================
-// POST /:id/finish - FINALIZAR ATIVIDADE (atualizado para peça a peça)
+// POST /:id/finish - FINALIZAR ATIVIDADE
 // =====================================================
 router.post('/:id/finish',
   authenticateToken,
   startLimiter,
   [
     param('id').isUUID(),
-    body('qty_realizada').optional().isInt({ min: 0 }),
+    body('qty_realizada').isInt({ min: 0 }),
     body('qty_refugo').optional().isInt({ min: 0 }),
     body('motivo_refugo').optional({ nullable: true, checkFalsy: false }).isString(),
   ],
@@ -498,7 +339,7 @@ router.post('/:id/finish',
   async (req, res) => {
     try {
       const { id } = req.params;
-      let { qty_realizada, qty_refugo, motivo_refugo } = req.body;
+      const { qty_realizada, qty_refugo, motivo_refugo } = req.body;
 
       // 1. Buscar atividade
       const { data: activity, error: findError } = await supabaseAdmin
@@ -522,20 +363,7 @@ router.post('/:id/finish',
         });
       }
 
-      // 2.5. NOVO: Se qty_realizada não foi informada, usar pecas_concluidas
-      if (!qty_realizada && activity.pecas_concluidas > 0) {
-        qty_realizada = activity.pecas_concluidas;
-        console.log(`📊 Usando pecas_concluidas como qty_realizada: ${qty_realizada}`);
-      }
-
-      if (!qty_realizada) {
-        return res.status(400).json({
-          success: false,
-          message: 'Informe a quantidade realizada ou registre peças individualmente'
-        });
-      }
-
-      // 2.6. Validar quantidade realizada vs planejada (máximo 150%)
+      // 2.5. Validar quantidade realizada vs planejada (máximo 150%)
       const maxPermitido = Math.floor(activity.qty_planejada * 1.5);
       if (qty_realizada > maxPermitido) {
         return res.status(400).json({
@@ -582,10 +410,9 @@ router.post('/:id/finish',
         status = 'anomala';
       }
 
-      // 7. Atualizar atividade com em_andamento = false
+      // 7. Atualizar atividade
       const updateData = {
         status,
-        em_andamento: false,  // IMPORTANTE: marcar como false ao finalizar
         ts_fim: ts_fim.toISOString(),
         qty_realizada: parseInt(qty_realizada),
         qty_refugo: parseInt(qty_refugo) || 0,
@@ -610,8 +437,6 @@ router.post('/:id/finish',
         .update({ status: 'aberta' })
         .eq('id', activity.of_id);
 
-      console.log('✅ Atividade finalizada com sucesso!');
-
       res.json({
         success: true,
         message: 'Atividade finalizada com sucesso',
@@ -619,7 +444,6 @@ router.post('/:id/finish',
         metrics: {
           tempo_total_seg,
           tempo_unit_seg: tempo_unit_seg ? tempo_unit_seg.toFixed(2) : null,
-          pecas_registradas: activity.pecas_concluidas,
           status
         }
       });
@@ -635,7 +459,7 @@ router.post('/:id/finish',
 );
 
 // =====================================================
-// GET /active/:user_id - BUSCAR SESSÃO ATIVA (com pecas_concluidas)
+// GET /active/:user_id - BUSCAR SESSÃO ATIVA
 // =====================================================
 router.get('/active/:user_id',
   authenticateToken,
@@ -649,7 +473,7 @@ router.get('/active/:user_id',
 
       const { data, error } = await supabaseAdmin
         .from('activities')
-        .select('*, users(nome), processes(nome), ofs(codigo, quantidade)')
+        .select('*, users(nome), processes(nome), ofs(codigo)')
         .eq('user_id', user_id)
         .in('status', ['ativa', 'pausada'])
         .order('ts_inicio', { ascending: false })
@@ -665,42 +489,6 @@ router.get('/active/:user_id',
 
     } catch (error) {
       console.error('Erro ao buscar sessão ativa:', error);
-      res.status(500).json({
-        success: false,
-        message: error.message
-      });
-    }
-  }
-);
-
-// =====================================================
-// GET /:id/pecas - LISTAR PEÇAS REGISTRADAS DE UMA ATIVIDADE
-// =====================================================
-router.get('/:id/pecas',
-  authenticateToken,
-  [
-    param('id').isUUID()
-  ],
-  handleValidationErrors,
-  async (req, res) => {
-    try {
-      const { id } = req.params;
-
-      const { data, error } = await supabaseAdmin
-        .from('v_tpu_por_peca')
-        .select('*')
-        .eq('atividade_id', id)
-        .order('numero_peca', { ascending: true });
-
-      if (error) throw error;
-
-      res.json({
-        success: true,
-        data: data || []
-      });
-
-    } catch (error) {
-      console.error('Erro ao buscar peças:', error);
       res.status(500).json({
         success: false,
         message: error.message
