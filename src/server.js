@@ -126,7 +126,8 @@ app.use('/api/processes', processRoutes);
 app.use('/api/ofs', ofRoutes);
 
 // Atividades (cronometragem)
-app.use('/api/activities', strictLimiter, activityRoutes);
+// Rate limiting específico aplicado individualmente em /start e /finish dentro de activities.js
+app.use('/api/activities', activityRoutes);
 
 // Dashboard (tempo real)
 app.use('/api/dashboard', dashboardRoutes);
