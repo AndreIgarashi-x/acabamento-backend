@@ -265,4 +265,438 @@ router.get('/live', authenticateToken, async (req, res) => {
   }
 });
 
+// =====================================================
+// FUNÇÕES AUXILIARES PARA ANÁLISE DE PROCESSOS
+// =====================================================
+
+/**
+ * Obtém resumo geral de produção
+ */
+async function getResumoGeral(dataInicio, dataFim) {
+  try {
+    console.log('📊 Buscando resumo geral...');
+
+    // Total de peças e colaboradores
+    const { data: pecasData, error: pecasError } = await supabaseAdmin
+      .from('pecas_registradas')
+      .select('id, atividade_id, activities!inner(user_id, process_id)')
+      .gte('created_at', dataInicio.toISOString())
+      .lte('created_at', dataFim.toISOString());
+
+    if (pecasError) throw pecasError;
+
+    const totalPecas = pecasData?.length || 0;
+    const colaboradoresAtivos = pecasData ? new Set(pecasData.map(p => p.activities.user_id)).size : 0;
+    const processosExecutados = pecasData ? new Set(pecasData.map(p => p.activities.process_id)).size : 0;
+
+    // TPU geral e peças por hora usando view
+    const { data: tpuData, error: tpuError } = await supabaseAdmin
+      .from('v_tpu_por_peca')
+      .select('tpu_minutos')
+      .gte('timestamp_conclusao', dataInicio.toISOString())
+      .lte('timestamp_conclusao', dataFim.toISOString())
+      .not('tpu_minutos', 'is', null);
+
+    if (tpuError) throw tpuError;
+
+    let tpuGeral = 0;
+    if (tpuData && tpuData.length > 0) {
+      const soma = tpuData.reduce((acc, p) => acc + (p.tpu_minutos || 0), 0);
+      tpuGeral = parseFloat((soma / tpuData.length).toFixed(1));
+    }
+
+    // Peças por hora
+    let pecasPorHora = 0;
+    if (pecasData && pecasData.length > 0) {
+      const timestamps = pecasData
+        .map(p => new Date(p.created_at))
+        .filter(d => !isNaN(d.getTime()));
+
+      if (timestamps.length > 1) {
+        const minTime = Math.min(...timestamps);
+        const maxTime = Math.max(...timestamps);
+        const horasTrabalhadas = (maxTime - minTime) / (1000 * 60 * 60);
+
+        if (horasTrabalhadas > 0) {
+          pecasPorHora = Math.round(totalPecas / horasTrabalhadas);
+        }
+      }
+    }
+
+    // Processo mais rápido - calcular TPU médio por processo
+    let processoMaisRapido = null;
+
+    if (pecasData && pecasData.length > 0) {
+      // Agrupar peças por processo
+      const tpuPorProcesso = {};
+
+      const { data: todasTpus, error: todasTpusError } = await supabaseAdmin
+        .from('v_tpu_por_peca')
+        .select('tpu_minutos, atividade_id')
+        .gte('timestamp_conclusao', dataInicio.toISOString())
+        .lte('timestamp_conclusao', dataFim.toISOString())
+        .not('tpu_minutos', 'is', null);
+
+      if (!todasTpusError && todasTpus && todasTpus.length > 0) {
+        // Mapear atividade_id para process_id
+        const atividadeParaProcesso = {};
+        pecasData.forEach(p => {
+          atividadeParaProcesso[p.atividade_id] = p.activities.process_id;
+        });
+
+        // Agrupar TPUs por processo
+        todasTpus.forEach(tpu => {
+          const processId = atividadeParaProcesso[tpu.atividade_id];
+          if (processId) {
+            if (!tpuPorProcesso[processId]) {
+              tpuPorProcesso[processId] = [];
+            }
+            tpuPorProcesso[processId].push(tpu.tpu_minutos);
+          }
+        });
+
+        // Calcular média por processo e encontrar o mais rápido
+        let menorTpu = Infinity;
+        let processoIdMaisRapido = null;
+
+        Object.keys(tpuPorProcesso).forEach(processId => {
+          const tpus = tpuPorProcesso[processId];
+          const media = tpus.reduce((acc, val) => acc + val, 0) / tpus.length;
+
+          if (media < menorTpu) {
+            menorTpu = media;
+            processoIdMaisRapido = processId;
+          }
+        });
+
+        // Buscar nome do processo
+        if (processoIdMaisRapido) {
+          const { data: processo, error: processoError } = await supabaseAdmin
+            .from('processes')
+            .select('nome')
+            .eq('id', processoIdMaisRapido)
+            .single();
+
+          if (!processoError && processo) {
+            processoMaisRapido = {
+              nome: processo.nome,
+              tpu_medio: parseFloat(menorTpu.toFixed(1))
+            };
+          }
+        }
+      }
+    }
+
+    return {
+      total_pecas: totalPecas,
+      processo_mais_rapido: processoMaisRapido,
+      tpu_geral: tpuGeral,
+      pecas_por_hora: pecasPorHora,
+      colaboradores_ativos: colaboradoresAtivos,
+      processos_executados: processosExecutados
+    };
+
+  } catch (error) {
+    console.error('❌ Erro em getResumoGeral:', error);
+    return {
+      total_pecas: 0,
+      processo_mais_rapido: null,
+      tpu_geral: 0,
+      pecas_por_hora: 0,
+      colaboradores_ativos: 0,
+      processos_executados: 0
+    };
+  }
+}
+
+/**
+ * Análise detalhada por processo
+ */
+async function getAnaliseProcessos(dataInicio, dataFim) {
+  try {
+    console.log('📋 Analisando processos...');
+
+    // Buscar todos os processos ativos
+    const { data: processos, error: processosError } = await supabaseAdmin
+      .from('processes')
+      .select('id, nome')
+      .eq('ativo', true);
+
+    if (processosError) throw processosError;
+    if (!processos || processos.length === 0) return [];
+
+    const resultado = [];
+
+    for (const processo of processos) {
+      // Peças do processo
+      const { data: pecas, error: pecasError } = await supabaseAdmin
+        .from('pecas_registradas')
+        .select('id, atividade_id, activities!inner(user_id, process_id)')
+        .eq('activities.process_id', processo.id)
+        .gte('created_at', dataInicio.toISOString())
+        .lte('created_at', dataFim.toISOString());
+
+      if (pecasError) {
+        console.error(`Erro ao buscar peças do processo ${processo.nome}:`, pecasError);
+        continue;
+      }
+
+      const totalPecas = pecas?.length || 0;
+      if (totalPecas === 0) continue; // Pular processos sem produção
+
+      // Atividades do processo
+      const atividadesIds = pecas ? [...new Set(pecas.map(p => p.atividade_id))] : [];
+      const totalAtividades = atividadesIds.length;
+      const colaboradores = pecas ? new Set(pecas.map(p => p.activities.user_id)).size : 0;
+
+      // TPU médio e variação usando a view
+      const { data: tpuData, error: tpuError } = await supabaseAdmin
+        .from('v_tpu_por_peca')
+        .select('tpu_minutos, timestamp_conclusao')
+        .in('atividade_id', atividadesIds.length > 0 ? atividadesIds : [-1])
+        .gte('timestamp_conclusao', dataInicio.toISOString())
+        .lte('timestamp_conclusao', dataFim.toISOString())
+        .not('tpu_minutos', 'is', null)
+        .order('timestamp_conclusao', { ascending: true });
+
+      let tpuMedio = 0;
+      let variacaoTpu = 0;
+      let primeiroTpu = null;
+      let ultimoTpu = null;
+
+      if (!tpuError && tpuData && tpuData.length > 0) {
+        const tpus = tpuData.map(t => t.tpu_minutos);
+        const soma = tpus.reduce((acc, val) => acc + val, 0);
+        tpuMedio = parseFloat((soma / tpus.length).toFixed(1));
+
+        // Variação (desvio padrão)
+        if (tpus.length > 1) {
+          const media = soma / tpus.length;
+          const somaQuadrados = tpus.reduce((acc, val) => acc + Math.pow(val - media, 2), 0);
+          variacaoTpu = parseFloat(Math.sqrt(somaQuadrados / tpus.length).toFixed(1));
+        }
+
+        primeiroTpu = parseFloat(tpuData[0].tpu_minutos.toFixed(1));
+        ultimoTpu = parseFloat(tpuData[tpuData.length - 1].tpu_minutos.toFixed(1));
+      }
+
+      // Tempo total em minutos
+      const { data: atividadesData, error: atividadesError } = await supabaseAdmin
+        .from('activities')
+        .select('tempo_total_seg')
+        .in('id', atividadesIds.length > 0 ? atividadesIds : [-1])
+        .not('tempo_total_seg', 'is', null);
+
+      let tempoTotalMinutos = 0;
+      if (!atividadesError && atividadesData && atividadesData.length > 0) {
+        const totalSeg = atividadesData.reduce((acc, a) => acc + (a.tempo_total_seg || 0), 0);
+        tempoTotalMinutos = Math.round(totalSeg / 60);
+      }
+
+      resultado.push({
+        nome: processo.nome,
+        tpu_medio: tpuMedio,
+        total_pecas: totalPecas,
+        total_atividades: totalAtividades,
+        colaboradores: colaboradores,
+        tempo_total_minutos: tempoTotalMinutos,
+        variacao_tpu: variacaoTpu,
+        primeiro_tpu: primeiroTpu,
+        ultimo_tpu: ultimoTpu
+      });
+    }
+
+    // Ordenar por total de peças (decrescente)
+    resultado.sort((a, b) => b.total_pecas - a.total_pecas);
+
+    return resultado;
+
+  } catch (error) {
+    console.error('❌ Erro em getAnaliseProcessos:', error);
+    return [];
+  }
+}
+
+/**
+ * Evolução temporal (por hora)
+ */
+async function getEvolucaoTemporal(dataInicio, dataFim) {
+  try {
+    console.log('📈 Calculando evolução temporal...');
+
+    const { data: pecas, error: pecasError } = await supabaseAdmin
+      .from('v_tpu_por_peca')
+      .select('tpu_minutos, timestamp_conclusao')
+      .gte('timestamp_conclusao', dataInicio.toISOString())
+      .lte('timestamp_conclusao', dataFim.toISOString())
+      .not('tpu_minutos', 'is', null)
+      .order('timestamp_conclusao', { ascending: true });
+
+    if (pecasError) throw pecasError;
+    if (!pecas || pecas.length === 0) return [];
+
+    // Agrupar por hora
+    const porHora = {};
+
+    pecas.forEach(peca => {
+      const data = new Date(peca.timestamp_conclusao);
+      const hora = `${String(data.getHours()).padStart(2, '0')}:00`;
+
+      if (!porHora[hora]) {
+        porHora[hora] = {
+          tpus: [],
+          pecas: 0
+        };
+      }
+
+      porHora[hora].tpus.push(peca.tpu_minutos);
+      porHora[hora].pecas++;
+    });
+
+    // Calcular médias e formatar
+    const resultado = Object.keys(porHora)
+      .sort()
+      .map(hora => {
+        const dados = porHora[hora];
+        const soma = dados.tpus.reduce((acc, val) => acc + val, 0);
+        const tpuMedio = parseFloat((soma / dados.tpus.length).toFixed(1));
+
+        return {
+          hora,
+          tpu_medio: tpuMedio,
+          pecas: dados.pecas
+        };
+      });
+
+    return resultado;
+
+  } catch (error) {
+    console.error('❌ Erro em getEvolucaoTemporal:', error);
+    return [];
+  }
+}
+
+/**
+ * Ranking de volume por processo
+ */
+async function getRankingVolume(dataInicio, dataFim) {
+  try {
+    console.log('🏆 Calculando ranking de volume...');
+
+    const { data: pecas, error: pecasError } = await supabaseAdmin
+      .from('pecas_registradas')
+      .select('id, activities!inner(process_id, processes!inner(nome))')
+      .gte('created_at', dataInicio.toISOString())
+      .lte('created_at', dataFim.toISOString());
+
+    if (pecasError) throw pecasError;
+    if (!pecas || pecas.length === 0) return [];
+
+    // Contar por processo
+    const porProcesso = {};
+    const totalGeral = pecas.length;
+
+    pecas.forEach(peca => {
+      const nomeProcesso = peca.activities.processes.nome;
+      if (!porProcesso[nomeProcesso]) {
+        porProcesso[nomeProcesso] = 0;
+      }
+      porProcesso[nomeProcesso]++;
+    });
+
+    // Formatar e calcular percentual
+    const resultado = Object.keys(porProcesso)
+      .map(processo => ({
+        processo,
+        pecas: porProcesso[processo],
+        percentual: parseFloat(((porProcesso[processo] / totalGeral) * 100).toFixed(1))
+      }))
+      .sort((a, b) => b.pecas - a.pecas)
+      .slice(0, 5); // Top 5
+
+    return resultado;
+
+  } catch (error) {
+    console.error('❌ Erro em getRankingVolume:', error);
+    return [];
+  }
+}
+
+// =====================================================
+// GET /processos - ANÁLISE DE PROCESSOS
+// =====================================================
+router.get('/processos', authenticateToken, async (req, res) => {
+  try {
+    console.log('🔄 Iniciando análise de processos...');
+
+    const { periodo = 'hoje' } = req.query;
+
+    // Definir datas baseado no período
+    let dataInicio, dataFim;
+
+    if (periodo === 'hoje') {
+      dataInicio = new Date();
+      dataInicio.setHours(0, 0, 0, 0);
+      dataFim = new Date();
+      dataFim.setHours(23, 59, 59, 999);
+    } else if (periodo === 'semana') {
+      dataFim = new Date();
+      dataFim.setHours(23, 59, 59, 999);
+      dataInicio = new Date();
+      dataInicio.setDate(dataInicio.getDate() - 7);
+      dataInicio.setHours(0, 0, 0, 0);
+    } else if (periodo === 'mes') {
+      dataFim = new Date();
+      dataFim.setHours(23, 59, 59, 999);
+      dataInicio = new Date();
+      dataInicio.setDate(dataInicio.getDate() - 30);
+      dataInicio.setHours(0, 0, 0, 0);
+    } else {
+      // Período customizado via query params
+      dataInicio = req.query.data_inicio ? new Date(req.query.data_inicio) : new Date();
+      dataFim = req.query.data_fim ? new Date(req.query.data_fim) : new Date();
+    }
+
+    console.log(`📅 Período: ${periodo} (${dataInicio.toISOString()} até ${dataFim.toISOString()})`);
+
+    // Executar todas as queries em paralelo
+    const [resumo, processos, evolucao, ranking] = await Promise.all([
+      getResumoGeral(dataInicio, dataFim),
+      getAnaliseProcessos(dataInicio, dataFim),
+      getEvolucaoTemporal(dataInicio, dataFim),
+      getRankingVolume(dataInicio, dataFim)
+    ]);
+
+    const response = {
+      success: true,
+      data: {
+        periodo: {
+          inicio: dataInicio.toISOString(),
+          fim: dataFim.toISOString(),
+          tipo: periodo
+        },
+        resumo,
+        processos,
+        evolucao_temporal: evolucao,
+        ranking_volume: ranking
+      }
+    };
+
+    console.log('✅ Análise de processos concluída!');
+    console.log(`   - Total de peças: ${resumo.total_pecas}`);
+    console.log(`   - Processos analisados: ${processos.length}`);
+    console.log(`   - Pontos de evolução: ${evolucao.length}`);
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('❌ Erro ao buscar análise de processos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar análise de processos',
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
