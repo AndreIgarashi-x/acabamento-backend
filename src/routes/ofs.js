@@ -568,7 +568,6 @@ router.post('/import-confirm',
               const updateData = {
                 quantidade: ofData.quantidade,
                 status: 'aberta',
-                data_conclusao: null,
                 updated_at: new Date().toISOString()
               };
 
