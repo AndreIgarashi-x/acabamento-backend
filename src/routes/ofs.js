@@ -400,10 +400,13 @@ router.post('/import-pdf',
       // ===================================
       // REGEX CORRIGIDO PARA FORMATO REAL
       // ===================================
-      // Formato real do PDF (SEM espaços): 01083700595INATIVOCAMISA SOCIAL MASCULINA6 25/09/2025
-      // Pattern: [OF:6dig][REF:5dig][STATUS][DESCRIÇÃO][QTD] [DATA]
+      // Formato real do PDF (logs mostraram):
+      // Linha 1: 010928   01805ATIVOPOLO MASC MC CINZA CHUMBO MOTORISTA JAMEF2
+      // Linha 2: 11/09/2025
+      // Pattern: [OF:6dig][ESPAÇOS][REF:5dig][STATUS][DESCRIÇÃO][QTD]
+      // DATA está em LINHA SEPARADA!
 
-      const regexOF = /(\d{6})(\d{5})(ATIVO|INATIVO|PRODUCAO|PRODUÇÃ\nO)([A-ZÀÁÉÍÓÚÂÊÔÃÕÇÑ0-9\s\/\-\(\)\[\]\.,:]+?)(\d+)\s+\d{2}\/\d{2}\/\d{4}/gi;
+      const regexOF = /^(\d{6})\s+(\d{5})(ATIVO|INATIVO|PRODUCAO)(.+?)(\d+)$/gim;
 
       let match;
       let matchCount = 0;
