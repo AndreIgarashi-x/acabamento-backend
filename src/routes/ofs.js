@@ -435,65 +435,111 @@ router.post('/import-confirm',
 
       console.log(`📦 Processando ${ofs.length} OFs em lote (importação inteligente)...`);
 
-      const ofsCriadas = [];
+      const ofsNovas = [];
       const ofsAtualizadas = [];
-      const erros = [];
+      const ofsPuladas = [];
 
-      for (const of of ofs) {
+      for (const ofData of ofs) {
         try {
           // Buscar OF existente pelo código
-          const { data: existing, error: findError } = await supabaseAdmin
+          const { data: ofExistente, error: findError } = await supabaseAdmin
             .from('ofs')
             .select('*')
-            .eq('codigo', of.codigo)
+            .eq('codigo', ofData.codigo)
             .maybeSingle();
 
           if (findError) throw findError;
 
-          if (existing) {
-            // OF EXISTE - Atualizar
-            console.log(`🔄 Atualizando OF ${of.codigo}`);
+          if (ofExistente) {
+            // ======================================
+            // OF JÁ EXISTE - DECIDIR O QUE FAZER
+            // ======================================
 
-            const updateData = {
-              quantidade: of.quantidade
-            };
+            if (ofExistente.status === 'aberta' || ofExistente.status === 'em_andamento') {
+              // ✅ ATUALIZAR quantidade (PDF tem a "verdade atual")
+              console.log(`🔄 Atualizando OF ${ofData.codigo}: ${ofExistente.quantidade} → ${ofData.quantidade}`);
 
-            // Atualizar referência e descrição se mudou
-            if (of.referencia) updateData.referencia = of.referencia;
-            if (of.descricao) updateData.descricao = of.descricao;
+              const updateData = {
+                quantidade: ofData.quantidade,
+                updated_at: new Date().toISOString()
+              };
 
-            // Se estava concluída, reabrir
-            if (existing.status === 'concluida') {
-              updateData.status = 'aberta';
-              updateData.data_conclusao = null;
-              console.log(`  ↪️ OF ${of.codigo} estava concluída, reabrindo...`);
+              // Atualizar referência e descrição se fornecidas
+              if (ofData.referencia) updateData.referencia = ofData.referencia;
+              if (ofData.descricao) updateData.descricao = ofData.descricao;
+
+              const { data: updated, error: updateError } = await supabaseAdmin
+                .from('ofs')
+                .update(updateData)
+                .eq('id', ofExistente.id)
+                .select()
+                .single();
+
+              if (updateError) throw updateError;
+
+              // Calcular diferença
+              const diferenca = ofData.quantidade - ofExistente.quantidade;
+
+              ofsAtualizadas.push({
+                of: ofData.codigo,
+                quantidadeAnterior: ofExistente.quantidade,
+                quantidadeNova: ofData.quantidade,
+                diferenca: diferenca,
+                status: ofExistente.status,
+                dados: updated
+              });
+
+            } else if (ofExistente.status === 'concluida') {
+              // OF CONCLUÍDA - Verificar se quer reabrir
+              // Por padrão, reabre se aparecer no PDF novamente
+              console.log(`↪️ OF ${ofData.codigo} estava concluída, reabrindo...`);
+
+              const updateData = {
+                quantidade: ofData.quantidade,
+                status: 'aberta',
+                data_conclusao: null,
+                updated_at: new Date().toISOString()
+              };
+
+              if (ofData.referencia) updateData.referencia = ofData.referencia;
+              if (ofData.descricao) updateData.descricao = ofData.descricao;
+
+              const { data: updated, error: updateError } = await supabaseAdmin
+                .from('ofs')
+                .update(updateData)
+                .eq('id', ofExistente.id)
+                .select()
+                .single();
+
+              if (updateError) throw updateError;
+
+              ofsAtualizadas.push({
+                of: ofData.codigo,
+                quantidadeAnterior: ofExistente.quantidade,
+                quantidadeNova: ofData.quantidade,
+                diferenca: ofData.quantidade - ofExistente.quantidade,
+                status: 'reaberta',
+                statusAnterior: 'concluida',
+                dados: updated
+              });
             }
 
-            const { data: updated, error: updateError } = await supabaseAdmin
-              .from('ofs')
-              .update(updateData)
-              .eq('id', existing.id)
-              .select()
-              .single();
-
-            if (updateError) throw updateError;
-
-            ofsAtualizadas.push(updated);
-
           } else {
-            // OF NÃO EXISTE - Criar nova
-            console.log(`✨ Criando nova OF ${of.codigo}`);
+            // ======================================
+            // OF NÃO EXISTE - CRIAR
+            // ======================================
+            console.log(`✨ Criando nova OF ${ofData.codigo}`);
 
             const insertData = {
-              codigo: of.codigo,
-              quantidade: of.quantidade,
+              codigo: ofData.codigo,
+              quantidade: ofData.quantidade,
               status: 'aberta'
             };
 
-            if (of.referencia) insertData.referencia = of.referencia;
-            if (of.descricao) insertData.descricao = of.descricao;
+            if (ofData.referencia) insertData.referencia = ofData.referencia;
+            if (ofData.descricao) insertData.descricao = ofData.descricao;
 
-            const { data: created, error: insertError } = await supabaseAdmin
+            const { data: novaOf, error: insertError } = await supabaseAdmin
               .from('ofs')
               .insert(insertData)
               .select()
@@ -501,28 +547,50 @@ router.post('/import-confirm',
 
             if (insertError) throw insertError;
 
-            ofsCriadas.push(created);
+            ofsNovas.push({
+              of: novaOf.codigo,
+              quantidade: novaOf.quantidade,
+              dados: novaOf
+            });
           }
 
         } catch (error) {
-          erros.push({
-            codigo: of.codigo,
+          console.error(`❌ Erro ao processar OF ${ofData.codigo}:`, error);
+          ofsPuladas.push({
+            of: ofData.codigo,
             motivo: error.message
           });
         }
       }
 
-      console.log(`✅ ${ofsCriadas.length} OFs criadas`);
+      console.log(`✅ ${ofsNovas.length} OFs novas criadas`);
       console.log(`🔄 ${ofsAtualizadas.length} OFs atualizadas`);
-      console.log(`❌ ${erros.length} OFs com erro`);
+      console.log(`⏩ ${ofsPuladas.length} OFs puladas/erro`);
 
+      // RETORNAR RESUMO DETALHADO
       res.json({
         success: true,
-        data: {
-          criadas: ofsCriadas.length,
+        resumo: {
+          total_processadas: ofs.length,
+          novas: ofsNovas.length,
           atualizadas: ofsAtualizadas.length,
-          erros: erros.length,
-          detalhes: { ofsCriadas, ofsAtualizadas, erros }
+          puladas: ofsPuladas.length
+        },
+        detalhes: {
+          ofs_novas: ofsNovas,
+          ofs_atualizadas: ofsAtualizadas,
+          ofs_puladas: ofsPuladas
+        },
+        // Manter compatibilidade com código antigo
+        data: {
+          criadas: ofsNovas.length,
+          atualizadas: ofsAtualizadas.length,
+          erros: ofsPuladas.length,
+          detalhes: {
+            ofsCriadas: ofsNovas.map(o => o.dados),
+            ofsAtualizadas: ofsAtualizadas.map(o => o.dados),
+            erros: ofsPuladas
+          }
         }
       });
 
