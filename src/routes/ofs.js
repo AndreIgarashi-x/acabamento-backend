@@ -352,43 +352,111 @@ router.post('/import-pdf',
       const data = await pdfParse(req.file.buffer);
       const text = data.text;
 
-      console.log(`✅ Texto extraído com sucesso! ${text.length} caracteres`);
-      console.log('📄 PDF recebido, extraindo OFs...');
-      console.log('Primeiras 800 caracteres:');
-      console.log(text.substring(0, 800));
+      // ===================================
+      // LOG 1: INFORMAÇÕES DO PDF
+      // ===================================
+      console.log('\n========================================');
+      console.log('📄 INFORMAÇÕES DO PDF');
+      console.log('========================================');
+      console.log(`Total de caracteres: ${text.length}`);
+      console.log(`Total de páginas: ${data.numpages}`);
+      console.log(`Versão do PDF: ${data.version || 'N/A'}`);
+      console.log(`Info: ${JSON.stringify(data.info || {})}`);
 
-      // Regex para encontrar linhas com OF e quantidade
-      // Formato: 011079   02674ATIVOJAQUETA...277
-      // Captura: OF (6 dígitos), Referência (5 dígitos), Descrição e Quantidade (no final da linha)
+      // ===================================
+      // LOG 2: PRIMEIROS 1500 CARACTERES
+      // ===================================
+      console.log('\n========================================');
+      console.log('📝 PRIMEIROS 1500 CARACTERES DO PDF:');
+      console.log('========================================');
+      console.log(text.substring(0, 1500));
+
+      // ===================================
+      // LOG 3: ANÁLISE LINHA POR LINHA
+      // ===================================
+      console.log('\n========================================');
+      console.log('🔍 ANÁLISE LINHA POR LINHA (primeiras 30):');
+      console.log('========================================');
+
       const lines = text.split('\n');
+      console.log(`Total de linhas no PDF: ${lines.length}`);
+
       const ofsEncontradas = [];
       const erros = [];
 
-      for (const line of lines) {
-        // Procurar linhas que começam com 6 dígitos (OF), seguido de referência,
-        // depois ATIVO, descrição e quantidade no final (1-4 dígitos)
-        const match = line.match(/^(\d{6})\s+(\d{5})ATIVO(.+?)(\d{1,4})$/);
+      // Mostrar primeiras 30 linhas para debug
+      lines.slice(0, 30).forEach((line, index) => {
+        console.log(`\nLinha ${index + 1} (${line.length} chars):`);
+        console.log(`  Conteúdo: "${line}"`);
+        console.log(`  Primeiro char code: ${line.charCodeAt(0) || 'vazio'}`);
+        console.log(`  Tem 6 dígitos no início? ${/^\d{6}/.test(line)}`);
+        console.log(`  Tem palavra ATIVO? ${line.includes('ATIVO')}`);
+      });
 
-        if (match) {
-          const codigo = match[1];
-          const referencia = match[2];
-          const descricao = match[3].trim();
-          const quantidade = parseInt(match[4]);
+      console.log('\n========================================');
+      console.log('🎯 PROCESSANDO TODAS AS LINHAS:');
+      console.log('========================================');
 
-          // Validar
-          if (codigo && quantidade > 0) {
-            // Incluir todas as OFs válidas (re-importação inteligente irá decidir se cria ou atualiza)
-            ofsEncontradas.push({
-              codigo,
-              referencia,
-              descricao,
-              quantidade
-            });
-          }
+      // ===================================
+      // REGEX CORRIGIDO PARA FORMATO REAL
+      // ===================================
+      // Formato real do PDF (SEM espaços): 01083700595INATIVOCAMISA SOCIAL MASCULINA6 25/09/2025
+      // Pattern: [OF:6dig][REF:5dig][STATUS][DESCRIÇÃO][QTD] [DATA]
+
+      const regexOF = /(\d{6})(\d{5})(ATIVO|INATIVO|PRODUCAO|PRODUÇÃ\nO)([A-ZÀÁÉÍÓÚÂÊÔÃÕÇÑ0-9\s\/\-\(\)\[\]\.,:]+?)(\d+)\s+\d{2}\/\d{2}\/\d{4}/gi;
+
+      let match;
+      let matchCount = 0;
+
+      // Reset regex antes de usar
+      regexOF.lastIndex = 0;
+
+      while ((match = regexOF.exec(text)) !== null) {
+        matchCount++;
+
+        console.log(`\n✅ MATCH #${matchCount}:`);
+        console.log(`  Match completo: "${match[0]}"`);
+        console.log(`  OF (match[1]): ${match[1]}`);
+        console.log(`  Referência (match[2]): ${match[2]}`);
+        console.log(`  Status (match[3]): ${match[3].trim()}`);
+        console.log(`  Descrição (match[4]): ${match[4].trim()}`);
+        console.log(`  Quantidade (match[5]): ${match[5]}`);
+
+        const codigo = match[1];
+        const referencia = match[2];
+        const status = match[3].trim();
+        const descricao = match[4].trim();
+        const quantidade = parseInt(match[5]);
+
+        // Filtrar apenas OFs ATIVO
+        if (status === 'ATIVO' && codigo && quantidade > 0) {
+          ofsEncontradas.push({
+            codigo,
+            referencia,
+            descricao,
+            quantidade
+          });
+          console.log(`  ✅ OF ATIVO adicionada ao array`);
+        } else {
+          console.log(`  ⏩ OF pulada - Status: ${status}, Quantidade: ${quantidade}`);
         }
       }
 
-      console.log(`✅ ${ofsEncontradas.length} OFs encontradas (novas + existentes)`);
+      console.log('\n========================================');
+      console.log('📊 RESULTADO FINAL:');
+      console.log('========================================');
+      console.log(`Total de OFs encontradas: ${ofsEncontradas.length}`);
+      console.log(`Total de erros: ${erros.length}`);
+
+      if (ofsEncontradas.length > 0) {
+        console.log('\n✅ OFs extraídas:');
+        ofsEncontradas.forEach((of, index) => {
+          console.log(`  ${index + 1}. OF ${of.codigo} - ${of.referencia} - ${of.descricao} - ${of.quantidade} peças`);
+        });
+      } else {
+        console.log('\n❌ NENHUMA OF ENCONTRADA!');
+        console.log('Verifique os logs acima para identificar o problema.');
+      }
 
       res.json({
         success: true,
