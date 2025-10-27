@@ -72,13 +72,30 @@ router.post('/start',
       }
 
       // 2. Verificar se já tem sessão ativa para este usuário
+      console.log('=' .repeat(60));
+      console.log('🔍 VERIFICANDO SESSÃO ATIVA');
+      console.log('Usuario ID:', user_id);
+
       const { data: activeSessions, error: activeError } = await supabaseAdmin
         .from('activities')
-        .select('id, status')
+        .select('id, status, em_andamento, ts_inicio, ts_fim')
         .eq('user_id', user_id)
-        .in('status', ['ativa', 'pausada']);
+        .in('status', ['ativa', 'pausada'])
+        .eq('em_andamento', true);
+
+      console.log('Query executada:', {
+        tabela: 'activities',
+        filtros: { user_id, status: ['ativa', 'pausada'], em_andamento: true }
+      });
+      console.log('Resultado:', activeSessions?.length || 0, 'sessões encontradas');
+
+      if (activeSessions && activeSessions.length > 0) {
+        console.log('❌ SESSÕES ATIVAS ENCONTRADAS:', JSON.stringify(activeSessions, null, 2));
+      }
+      console.log('=' .repeat(60));
 
       if (activeError) {
+        console.error('❌ Erro na query de verificação:', activeError);
         throw activeError;
       }
 
@@ -86,7 +103,11 @@ router.post('/start',
         return res.status(400).json({
           success: false,
           message: 'Já existe uma sessão ativa para este usuário. Finalize ou pause antes de iniciar uma nova.',
-          active_session_id: activeSessions[0].id
+          active_session_id: activeSessions[0].id,
+          debug: {
+            sessoes_encontradas: activeSessions.length,
+            detalhes: activeSessions[0]
+          }
         });
       }
 
@@ -501,6 +522,10 @@ router.post('/:id/finish',
       let { qty_realizada, qty_refugo, motivo_refugo } = req.body;
 
       // 1. Buscar atividade
+      console.log('=' .repeat(60));
+      console.log('🏁 INICIANDO FINALIZAÇÃO');
+      console.log('Atividade ID:', id);
+
       const { data: activity, error: findError } = await supabaseAdmin
         .from('activities')
         .select('*')
@@ -508,14 +533,26 @@ router.post('/:id/finish',
         .single();
 
       if (findError || !activity) {
+        console.log('❌ Atividade não encontrada:', id);
         return res.status(404).json({
           success: false,
           message: 'Atividade não encontrada'
         });
       }
 
+      console.log('📊 Atividade ANTES de finalizar:', {
+        id: activity.id,
+        user_id: activity.user_id,
+        status: activity.status,
+        em_andamento: activity.em_andamento,
+        ts_inicio: activity.ts_inicio,
+        ts_fim: activity.ts_fim,
+        pecas_concluidas: activity.pecas_concluidas
+      });
+
       // 2. Validar status
       if (activity.status !== 'ativa' && activity.status !== 'pausada') {
+        console.log('❌ Status inválido para finalizar:', activity.status);
         return res.status(400).json({
           success: false,
           message: `Não é possível finalizar uma atividade com status: ${activity.status}`
@@ -595,6 +632,8 @@ router.post('/:id/finish',
         pausas
       };
 
+      console.log('💾 Salvando finalização com dados:', updateData);
+
       const { data: updated, error: updateError } = await supabaseAdmin
         .from('activities')
         .update(updateData)
@@ -602,7 +641,31 @@ router.post('/:id/finish',
         .select('*, users(nome), processes(nome), ofs(codigo)')
         .single();
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('❌ ERRO ao atualizar atividade:', updateError);
+        throw updateError;
+      }
+
+      console.log('✅ Atividade ATUALIZADA:', {
+        id: updated.id,
+        status: updated.status,
+        em_andamento: updated.em_andamento,
+        ts_fim: updated.ts_fim,
+        qty_realizada: updated.qty_realizada
+      });
+
+      // VERIFICAÇÃO: Buscar novamente para confirmar que salvou
+      const { data: verificacao, error: verifyError } = await supabaseAdmin
+        .from('activities')
+        .select('id, status, em_andamento, ts_fim')
+        .eq('id', id)
+        .single();
+
+      console.log('🔍 VERIFICAÇÃO pós-salvamento:', verificacao);
+
+      if (verifyError) {
+        console.error('⚠️ Erro na verificação:', verifyError);
+      }
 
       // 8. VOLTAR STATUS DA OF PARA "ABERTA"
       await supabaseAdmin
@@ -611,6 +674,7 @@ router.post('/:id/finish',
         .eq('id', activity.of_id);
 
       console.log('✅ Atividade finalizada com sucesso!');
+      console.log('=' .repeat(60));
 
       res.json({
         success: true,
@@ -665,6 +729,151 @@ router.get('/active/:user_id',
 
     } catch (error) {
       console.error('Erro ao buscar sessão ativa:', error);
+      res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+);
+
+// =====================================================
+// POST /force-close-all/:user_id - EMERGÊNCIA: FECHAR TODAS AS SESSÕES ABERTAS
+// =====================================================
+router.post('/force-close-all/:user_id',
+  authenticateToken,
+  [
+    param('user_id').isUUID()
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { user_id } = req.params;
+
+      console.log('=' .repeat(60));
+      console.log('🚨 FORÇANDO FECHAMENTO DE TODAS AS ATIVIDADES');
+      console.log('Usuario ID:', user_id);
+
+      // 1. Buscar todas as atividades abertas
+      const { data: abertas, error: findError } = await supabaseAdmin
+        .from('activities')
+        .select('id, status, em_andamento, ts_inicio, process_id, of_id')
+        .eq('user_id', user_id)
+        .or('em_andamento.eq.true,status.in.(ativa,pausada)');
+
+      if (findError) {
+        console.error('❌ Erro ao buscar atividades abertas:', findError);
+        throw findError;
+      }
+
+      console.log('📋 Atividades abertas encontradas:', abertas?.length || 0);
+
+      if (!abertas || abertas.length === 0) {
+        console.log('✅ Nenhuma atividade aberta encontrada');
+        console.log('=' .repeat(60));
+        return res.json({
+          success: true,
+          message: 'Nenhuma atividade aberta encontrada',
+          fechadas: 0
+        });
+      }
+
+      console.log('Detalhes das atividades:', JSON.stringify(abertas, null, 2));
+
+      // 2. Fechar todas forçadamente
+      const agora = new Date().toISOString();
+      const idsParaFechar = abertas.map(a => a.id);
+
+      const { data: fechadas, error: updateError } = await supabaseAdmin
+        .from('activities')
+        .update({
+          status: 'concluida',
+          em_andamento: false,
+          ts_fim: agora,
+          qty_realizada: 0, // Forçar quantidade zero se não foi registrada
+          tempo_total_seg: 0
+        })
+        .in('id', idsParaFechar)
+        .select('id, status, em_andamento, ts_fim');
+
+      if (updateError) {
+        console.error('❌ Erro ao fechar atividades:', updateError);
+        throw updateError;
+      }
+
+      console.log('✅ Atividades fechadas:', fechadas?.length || 0);
+      console.log('Detalhes:', JSON.stringify(fechadas, null, 2));
+      console.log('=' .repeat(60));
+
+      res.json({
+        success: true,
+        message: `${fechadas?.length || 0} atividade(s) foram fechadas forçadamente`,
+        atividades: fechadas
+      });
+
+    } catch (error) {
+      console.error('❌ Erro no force-close-all:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Erro ao forçar fechamento de atividades',
+        error: error.message
+      });
+    }
+  }
+);
+
+// =====================================================
+// GET /debug/:user_id - DEBUG: LISTAR TODAS AS ATIVIDADES DO USUÁRIO
+// =====================================================
+router.get('/debug/:user_id',
+  authenticateToken,
+  [
+    param('user_id').isUUID()
+  ],
+  handleValidationErrors,
+  async (req, res) => {
+    try {
+      const { user_id } = req.params;
+
+      console.log('🔍 DEBUG - Listando todas as atividades do usuário:', user_id);
+
+      const { data: atividades, error } = await supabaseAdmin
+        .from('activities')
+        .select('id, status, em_andamento, ts_inicio, ts_fim, qty_planejada, qty_realizada, pecas_concluidas, processes(nome), ofs(codigo)')
+        .eq('user_id', user_id)
+        .order('ts_inicio', { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+
+      // Separar por status
+      const abertas = atividades?.filter(a => a.em_andamento === true) || [];
+      const ativas = atividades?.filter(a => a.status === 'ativa') || [];
+      const pausadas = atividades?.filter(a => a.status === 'pausada') || [];
+      const concluidas = atividades?.filter(a => a.status === 'concluida') || [];
+
+      const resumo = {
+        total: atividades?.length || 0,
+        em_andamento_true: abertas.length,
+        status_ativa: ativas.length,
+        status_pausada: pausadas.length,
+        status_concluida: concluidas.length,
+        problematicas: atividades?.filter(a =>
+          (a.status === 'concluida' && a.em_andamento === true) ||
+          (a.em_andamento === false && (a.status === 'ativa' || a.status === 'pausada'))
+        ) || []
+      };
+
+      console.log('📊 Resumo:', resumo);
+
+      res.json({
+        success: true,
+        resumo,
+        atividades: atividades || []
+      });
+
+    } catch (error) {
+      console.error('❌ Erro no debug:', error);
       res.status(500).json({
         success: false,
         message: error.message
