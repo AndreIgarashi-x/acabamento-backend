@@ -520,7 +520,7 @@ async function getAnaliseProcessos(dataInicio, dataFim) {
 /**
  * Evolução temporal (por hora)
  */
-async function getEvolucaoTemporal(dataInicio, dataFim) {
+async function getEvolucaoTemporal(dataInicio, dataFim, periodo = 'hoje') {
   try {
     console.log('📈 Calculando evolução temporal...');
 
@@ -535,39 +535,49 @@ async function getEvolucaoTemporal(dataInicio, dataFim) {
     if (pecasError) throw pecasError;
     if (!pecas || pecas.length === 0) return [];
 
-    // Agrupar por hora
-    const porHora = {};
+    // Agrupar por hora (hoje) ou por dia (semana/mês)
+    const agruparPorDia = periodo !== 'hoje';
+    const agrupado = {};
 
     pecas.forEach(peca => {
       const data = new Date(peca.timestamp_conclusao);
-      const hora = `${String(data.getHours()).padStart(2, '0')}:00`;
 
-      if (!porHora[hora]) {
-        porHora[hora] = {
+      let chave;
+      if (agruparPorDia) {
+        // Agrupar por dia (formato DD/MM)
+        chave = `${String(data.getDate()).padStart(2, '0')}/${String(data.getMonth() + 1).padStart(2, '0')}`;
+      } else {
+        // Agrupar por hora (formato HH:00)
+        chave = `${String(data.getHours()).padStart(2, '0')}:00`;
+      }
+
+      if (!agrupado[chave]) {
+        agrupado[chave] = {
           tpus: [],
           pecas: 0
         };
       }
 
-      porHora[hora].tpus.push(peca.tpu_minutos);
-      porHora[hora].pecas++;
+      agrupado[chave].tpus.push(peca.tpu_minutos);
+      agrupado[chave].pecas++;
     });
 
     // Calcular médias e formatar
-    const resultado = Object.keys(porHora)
+    const resultado = Object.keys(agrupado)
       .sort()
-      .map(hora => {
-        const dados = porHora[hora];
+      .map(chave => {
+        const dados = agrupado[chave];
         const soma = dados.tpus.reduce((acc, val) => acc + val, 0);
         const tpuMedio = parseFloat((soma / dados.tpus.length).toFixed(1));
 
         return {
-          hora,
+          hora: chave, // Mantém "hora" como nome da propriedade para compatibilidade com frontend
           tpu_medio: tpuMedio,
           pecas: dados.pecas
         };
       });
 
+    console.log(`   Agrupamento: ${agruparPorDia ? 'por dia' : 'por hora'}, pontos: ${resultado.length}`);
     return resultado;
 
   } catch (error) {
@@ -629,7 +639,7 @@ router.get('/processos', authenticateToken, async (req, res) => {
   try {
     console.log('🔄 Iniciando análise de processos...');
 
-    const { periodo = 'hoje' } = req.query;
+    const { periodo = 'mes' } = req.query;
 
     // Definir datas baseado no período
     let dataInicio, dataFim;
@@ -646,24 +656,48 @@ router.get('/processos', authenticateToken, async (req, res) => {
       dataInicio.setDate(dataInicio.getDate() - 7);
       dataInicio.setHours(0, 0, 0, 0);
     } else if (periodo === 'mes') {
-      dataFim = new Date();
-      dataFim.setHours(23, 59, 59, 999);
+      // Primeiro dia do mês atual
       dataInicio = new Date();
-      dataInicio.setDate(dataInicio.getDate() - 30);
+      dataInicio.setDate(1);
       dataInicio.setHours(0, 0, 0, 0);
+
+      // Último dia do mês atual
+      dataFim = new Date();
+      dataFim.setMonth(dataFim.getMonth() + 1);
+      dataFim.setDate(0);
+      dataFim.setHours(23, 59, 59, 999);
     } else {
       // Período customizado via query params
       dataInicio = req.query.data_inicio ? new Date(req.query.data_inicio) : new Date();
       dataFim = req.query.data_fim ? new Date(req.query.data_fim) : new Date();
     }
 
-    console.log(`📅 Período: ${periodo} (${dataInicio.toISOString()} até ${dataFim.toISOString()})`);
+    // Formatar descrição do período
+    const meses = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+                   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+    let periodoDescricao = '';
+
+    if (periodo === 'hoje') {
+      periodoDescricao = `Hoje (${dataInicio.toLocaleDateString('pt-BR')})`;
+    } else if (periodo === 'semana') {
+      periodoDescricao = `Últimos 7 dias (${dataInicio.toLocaleDateString('pt-BR')} - ${dataFim.toLocaleDateString('pt-BR')})`;
+    } else if (periodo === 'mes') {
+      const mes = meses[dataInicio.getMonth()];
+      const ano = dataInicio.getFullYear();
+      periodoDescricao = `${mes} ${ano} (${dataInicio.toLocaleDateString('pt-BR')} - ${dataFim.toLocaleDateString('pt-BR')})`;
+    } else {
+      periodoDescricao = `${dataInicio.toLocaleDateString('pt-BR')} - ${dataFim.toLocaleDateString('pt-BR')}`;
+    }
+
+    console.log(`📅 Período: ${periodoDescricao}`);
+    console.log(`   Início: ${dataInicio.toISOString()}`);
+    console.log(`   Fim: ${dataFim.toISOString()}`);
 
     // Executar todas as queries em paralelo
     const [resumo, processos, evolucao, ranking] = await Promise.all([
       getResumoGeral(dataInicio, dataFim),
       getAnaliseProcessos(dataInicio, dataFim),
-      getEvolucaoTemporal(dataInicio, dataFim),
+      getEvolucaoTemporal(dataInicio, dataFim, periodo), // Passa o período para agrupamento correto
       getRankingVolume(dataInicio, dataFim)
     ]);
 
@@ -673,7 +707,8 @@ router.get('/processos', authenticateToken, async (req, res) => {
         periodo: {
           inicio: dataInicio.toISOString(),
           fim: dataFim.toISOString(),
-          tipo: periodo
+          tipo: periodo,
+          descricao: periodoDescricao
         },
         resumo,
         processos,
