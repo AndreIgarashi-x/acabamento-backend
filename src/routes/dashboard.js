@@ -292,16 +292,17 @@ async function getResumoGeral(dataInicio, dataFim) {
     // TPU geral e peças por hora usando view
     const { data: tpuData, error: tpuError } = await supabaseAdmin
       .from('v_tpu_por_peca')
-      .select('tpu_minutos')
+      .select('tpu_individual_seg')
       .gte('timestamp_conclusao', dataInicio.toISOString())
       .lte('timestamp_conclusao', dataFim.toISOString())
-      .not('tpu_minutos', 'is', null);
+      .not('tpu_individual_seg', 'is', null);
 
     if (tpuError) throw tpuError;
 
     let tpuGeral = 0;
     if (tpuData && tpuData.length > 0) {
-      const soma = tpuData.reduce((acc, p) => acc + (p.tpu_minutos || 0), 0);
+      // Converter de segundos para minutos
+      const soma = tpuData.reduce((acc, p) => acc + ((p.tpu_individual_seg || 0) / 60), 0);
       tpuGeral = parseFloat((soma / tpuData.length).toFixed(1));
     }
 
@@ -332,10 +333,10 @@ async function getResumoGeral(dataInicio, dataFim) {
 
       const { data: todasTpus, error: todasTpusError } = await supabaseAdmin
         .from('v_tpu_por_peca')
-        .select('tpu_minutos, atividade_id')
+        .select('tpu_individual_seg, atividade_id')
         .gte('timestamp_conclusao', dataInicio.toISOString())
         .lte('timestamp_conclusao', dataFim.toISOString())
-        .not('tpu_minutos', 'is', null);
+        .not('tpu_individual_seg', 'is', null);
 
       if (!todasTpusError && todasTpus && todasTpus.length > 0) {
         // Mapear atividade_id para process_id
@@ -351,7 +352,8 @@ async function getResumoGeral(dataInicio, dataFim) {
             if (!tpuPorProcesso[processId]) {
               tpuPorProcesso[processId] = [];
             }
-            tpuPorProcesso[processId].push(tpu.tpu_minutos);
+            // Converter de segundos para minutos
+            tpuPorProcesso[processId].push(tpu.tpu_individual_seg / 60);
           }
         });
 
@@ -452,11 +454,11 @@ async function getAnaliseProcessos(dataInicio, dataFim) {
       // TPU médio e variação usando a view
       const { data: tpuData, error: tpuError } = await supabaseAdmin
         .from('v_tpu_por_peca')
-        .select('tpu_minutos, timestamp_conclusao')
+        .select('tpu_individual_seg, timestamp_conclusao')
         .in('atividade_id', atividadesIds.length > 0 ? atividadesIds : [-1])
         .gte('timestamp_conclusao', dataInicio.toISOString())
         .lte('timestamp_conclusao', dataFim.toISOString())
-        .not('tpu_minutos', 'is', null)
+        .not('tpu_individual_seg', 'is', null)
         .order('timestamp_conclusao', { ascending: true });
 
       let tpuMedio = 0;
@@ -465,7 +467,8 @@ async function getAnaliseProcessos(dataInicio, dataFim) {
       let ultimoTpu = null;
 
       if (!tpuError && tpuData && tpuData.length > 0) {
-        const tpus = tpuData.map(t => t.tpu_minutos);
+        // Converter de segundos para minutos
+        const tpus = tpuData.map(t => t.tpu_individual_seg / 60);
         const soma = tpus.reduce((acc, val) => acc + val, 0);
         tpuMedio = parseFloat((soma / tpus.length).toFixed(1));
 
@@ -476,8 +479,8 @@ async function getAnaliseProcessos(dataInicio, dataFim) {
           variacaoTpu = parseFloat(Math.sqrt(somaQuadrados / tpus.length).toFixed(1));
         }
 
-        primeiroTpu = parseFloat(tpuData[0].tpu_minutos.toFixed(1));
-        ultimoTpu = parseFloat(tpuData[tpuData.length - 1].tpu_minutos.toFixed(1));
+        primeiroTpu = parseFloat((tpuData[0].tpu_individual_seg / 60).toFixed(1));
+        ultimoTpu = parseFloat((tpuData[tpuData.length - 1].tpu_individual_seg / 60).toFixed(1));
       }
 
       // Tempo total em minutos
@@ -526,10 +529,10 @@ async function getEvolucaoTemporal(dataInicio, dataFim, periodo = 'hoje') {
 
     const { data: pecas, error: pecasError } = await supabaseAdmin
       .from('v_tpu_por_peca')
-      .select('tpu_minutos, timestamp_conclusao')
+      .select('tpu_individual_seg, timestamp_conclusao')
       .gte('timestamp_conclusao', dataInicio.toISOString())
       .lte('timestamp_conclusao', dataFim.toISOString())
-      .not('tpu_minutos', 'is', null)
+      .not('tpu_individual_seg', 'is', null)
       .order('timestamp_conclusao', { ascending: true });
 
     if (pecasError) throw pecasError;
@@ -558,7 +561,8 @@ async function getEvolucaoTemporal(dataInicio, dataFim, periodo = 'hoje') {
         };
       }
 
-      agrupado[chave].tpus.push(peca.tpu_minutos);
+      // Converter de segundos para minutos
+      agrupado[chave].tpus.push(peca.tpu_individual_seg / 60);
       agrupado[chave].pecas++;
     });
 
