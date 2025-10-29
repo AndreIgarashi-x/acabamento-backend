@@ -22,6 +22,7 @@ const activityRoutes = require('./routes/activities');
 const dashboardRoutes = require('./routes/dashboard');
 const analyticsRoutes = require('./routes/analytics');
 const reportRoutes = require('./routes/reports');
+const relatoriosRoutes = require('./routes/relatorios');
 const assistantRoutes = require('./routes/assistant');
 
 // Middlewares customizados
@@ -137,6 +138,9 @@ app.use('/api/analytics', analyticsRoutes);
 
 // Relatórios
 app.use('/api/reports', reportRoutes);
+
+// Relatórios completos (PDF)
+app.use('/api/relatorios', relatoriosRoutes);
 
 // Assistente IA
 app.use('/api/assistant', assistantRoutes);
