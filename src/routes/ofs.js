@@ -406,12 +406,14 @@ router.post('/import-pdf',
       // ===================================
       // REGEX PARA MÚLTIPLOS FORMATOS
       // ===================================
+      // Formato NOVO (com grau de dificuldade):
+      //   P3  011921  01805  ATIVO  POLO MASC MC CINZA  100
       // Formato ACABAMENTO: 010928   01805ATIVOPOLO MASC MC CINZA CHUMBO MOTORISTA JAMEF2
       // Formato COSTURA: 01082601586ATIVOBLUSA DE MOLETOM C. CAPUZ GRAFITE DCJ8
-      //                  P301153600509ATIVOPOLO UNIS ML VERMELHA HYDRO4
-      // Pattern: [OF: pode ter letras][REF:5dig][STATUS][DESCRIÇÃO][QTD no final]
+      //
+      // Pattern: [P1-P5 opcional][OF:6-11 dígitos][REF:5dig][STATUS][DESCRIÇÃO][QTD no final]
 
-      const regexOF = /^([A-Z]*\d+)\s*(\d{5})(ATIVO|INATIVO|PRODUCAO)(.+?)(\d+)$/gim;
+      const regexOF = /^(?:P[1-5]\s+)?(\d{6,11})\s*(\d{5})\s*(ATIVO|INATIVO|PRODUCAO)(.+?)(\d+)$/gim;
 
       let match;
       let matchCount = 0;
