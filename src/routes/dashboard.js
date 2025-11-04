@@ -272,16 +272,26 @@ router.get('/live', authenticateToken, async (req, res) => {
 /**
  * Obtém resumo geral de produção
  */
-async function getResumoGeral(dataInicio, dataFim) {
+async function getResumoGeral(dataInicio, dataFim, moduloId = null) {
   try {
     console.log('📊 Buscando resumo geral...');
+    if (moduloId) {
+      console.log(`   Filtrando por módulo ID: ${moduloId}`);
+    }
 
     // Total de peças e colaboradores
-    const { data: pecasData, error: pecasError } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('pecas_registradas')
-      .select('id, atividade_id, activities!inner(user_id, process_id)')
+      .select('id, atividade_id, activities!inner(user_id, process_id, processes!inner(modulo_id))')
       .gte('created_at', dataInicio.toISOString())
       .lte('created_at', dataFim.toISOString());
+
+    // Filtrar por módulo se fornecido
+    if (moduloId) {
+      query = query.eq('activities.processes.modulo_id', moduloId);
+    }
+
+    const { data: pecasData, error: pecasError } = await query;
 
     if (pecasError) throw pecasError;
 
@@ -414,15 +424,24 @@ async function getResumoGeral(dataInicio, dataFim) {
 /**
  * Análise detalhada por processo
  */
-async function getAnaliseProcessos(dataInicio, dataFim) {
+async function getAnaliseProcessos(dataInicio, dataFim, moduloId = null) {
   try {
     console.log('📋 Analisando processos...');
+    if (moduloId) {
+      console.log(`   Filtrando por módulo ID: ${moduloId}`);
+    }
 
-    // Buscar todos os processos ativos
-    const { data: processos, error: processosError } = await supabaseAdmin
+    // Buscar todos os processos ativos (filtrar por módulo se fornecido)
+    let query = supabaseAdmin
       .from('processes')
       .select('id, nome')
       .eq('ativo', true);
+
+    if (moduloId) {
+      query = query.eq('modulo_id', moduloId);
+    }
+
+    const { data: processos, error: processosError } = await query;
 
     if (processosError) throw processosError;
     if (!processos || processos.length === 0) return [];
@@ -593,15 +612,25 @@ async function getEvolucaoTemporal(dataInicio, dataFim, periodo = 'hoje') {
 /**
  * Ranking de volume por processo
  */
-async function getRankingVolume(dataInicio, dataFim) {
+async function getRankingVolume(dataInicio, dataFim, moduloId = null) {
   try {
     console.log('🏆 Calculando ranking de volume...');
+    if (moduloId) {
+      console.log(`   Filtrando por módulo ID: ${moduloId}`);
+    }
 
-    const { data: pecas, error: pecasError } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('pecas_registradas')
-      .select('id, activities!inner(process_id, processes!inner(nome))')
+      .select('id, activities!inner(process_id, processes!inner(nome, modulo_id))')
       .gte('created_at', dataInicio.toISOString())
       .lte('created_at', dataFim.toISOString());
+
+    // Filtrar por módulo se fornecido
+    if (moduloId) {
+      query = query.eq('activities.processes.modulo_id', moduloId);
+    }
+
+    const { data: pecas, error: pecasError } = await query;
 
     if (pecasError) throw pecasError;
     if (!pecas || pecas.length === 0) return [];
@@ -643,7 +672,11 @@ router.get('/processos', authenticateToken, async (req, res) => {
   try {
     console.log('🔄 Iniciando análise de processos...');
 
-    const { periodo = 'mes' } = req.query;
+    const { periodo = 'mes', modulo_id } = req.query;
+
+    if (modulo_id) {
+      console.log(`🎯 Filtrando dashboard por módulo ID: ${modulo_id}`);
+    }
 
     // Definir datas baseado no período
     let dataInicio, dataFim;
@@ -697,12 +730,12 @@ router.get('/processos', authenticateToken, async (req, res) => {
     console.log(`   Início: ${dataInicio.toISOString()}`);
     console.log(`   Fim: ${dataFim.toISOString()}`);
 
-    // Executar todas as queries em paralelo
+    // Executar todas as queries em paralelo (com filtro de módulo)
     const [resumo, processos, evolucao, ranking] = await Promise.all([
-      getResumoGeral(dataInicio, dataFim),
-      getAnaliseProcessos(dataInicio, dataFim),
+      getResumoGeral(dataInicio, dataFim, modulo_id),
+      getAnaliseProcessos(dataInicio, dataFim, modulo_id),
       getEvolucaoTemporal(dataInicio, dataFim, periodo), // Passa o período para agrupamento correto
-      getRankingVolume(dataInicio, dataFim)
+      getRankingVolume(dataInicio, dataFim, modulo_id)
     ]);
 
     const response = {
