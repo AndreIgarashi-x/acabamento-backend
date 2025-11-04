@@ -25,6 +25,11 @@ const reportRoutes = require('./routes/reports');
 const relatoriosRoutes = require('./routes/relatorios');
 const assistantRoutes = require('./routes/assistant');
 
+// Rotas do módulo Estampas
+const machinesRoutes = require('./routes/machines');
+const bordadoRoutes = require('./routes/bordado');
+const estampasReportsRoutes = require('./routes/estampas-reports');
+
 // Middlewares customizados
 const errorHandler = require('./middlewares/errorHandler');
 const logger = require('./utils/logger');
@@ -56,13 +61,29 @@ if (process.env.FRONTEND_URL) {
 app.use(cors({
   origin: function (origin, callback) {
     // Permitir requisições sem origin (mobile apps, curl, etc.)
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
+    if (!origin) {
+      console.log('✅ CORS: Requisição sem origin permitida');
+      return callback(null, true);
     }
-    return callback(null, true);
+
+    // Em desenvolvimento, permitir IPs locais (192.168.x.x, 10.x.x.x, etc.)
+    const isDevelopment = process.env.NODE_ENV !== 'production';
+    const isLocalIP = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(origin);
+
+    if (isDevelopment && isLocalIP) {
+      console.log('✅ CORS: IP local permitido em desenvolvimento:', origin);
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      console.log('✅ CORS: Origin permitida:', origin);
+      return callback(null, true);
+    }
+
+    console.log('❌ CORS: Origin não permitida:', origin);
+    console.log('   Origins permitidas:', allowedOrigins);
+    const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+    return callback(new Error(msg), false);
   },
   credentials: true
 }));
@@ -144,6 +165,19 @@ app.use('/api/relatorios', relatoriosRoutes);
 
 // Assistente IA
 app.use('/api/assistant', assistantRoutes);
+
+// =====================================================
+// ROTAS DO MÓDULO ESTAMPAS
+// =====================================================
+
+// Máquinas (Bordadeiras, DTF, Prensas)
+app.use('/api/machines', machinesRoutes);
+
+// Atividades de Bordado
+app.use('/api/bordado', bordadoRoutes);
+
+// Relatórios de Estampas
+app.use('/api/estampas-reports', estampasReportsRoutes);
 
 // =====================================================
 // ROTA 404

@@ -190,7 +190,7 @@ router.post('/register',
       // 2. Hash do PIN
       const pin_hash = await bcrypt.hash(pin, 10);
 
-      // 3. Criar usuário
+      // 3. Criar usuário (com acesso a todos os módulos por padrão)
       const { data: user, error: createError } = await supabaseAdmin
         .from('users')
         .insert({
@@ -199,9 +199,10 @@ router.post('/register',
           email,
           pin_hash,
           perfil,
-          ativo: true
+          ativo: true,
+          modulos_permitidos: ['acabamento', 'costura', 'estampas'] // Acesso a todos os módulos
         })
-        .select('id, nome, matricula, email, perfil')
+        .select('id, nome, matricula, email, perfil, modulos_permitidos')
         .single();
 
       if (createError) {
