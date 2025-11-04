@@ -22,13 +22,17 @@ const upload = multer({
 // Listar OFs (com contagem de atividades)
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, modulo_id } = req.query;
 
     // Buscar OFs
     let query = supabaseAdmin.from('ofs').select('*');
 
     if (status) {
       query = query.eq('status', status);
+    }
+
+    if (modulo_id) {
+      query = query.eq('modulo_id', modulo_id);
     }
 
     const { data: ofs, error } = await query.order('created_at', { ascending: false });
@@ -66,7 +70,8 @@ router.post('/',
     body('codigo').notEmpty(),
     body('quantidade').isInt({ min: 1 }),
     body('referencia').optional(),
-    body('descricao').optional()
+    body('descricao').optional(),
+    body('modulo_id').optional().isInt()
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -75,7 +80,7 @@ router.post('/',
     }
 
     try {
-      const { codigo, quantidade, referencia, descricao } = req.body;
+      const { codigo, quantidade, referencia, descricao, modulo_id } = req.body;
 
       const insertData = {
         codigo,
@@ -85,6 +90,7 @@ router.post('/',
 
       if (referencia) insertData.referencia = referencia;
       if (descricao) insertData.descricao = descricao;
+      if (modulo_id) insertData.modulo_id = modulo_id;
 
       const { data, error } = await supabaseAdmin
         .from('ofs')
@@ -384,8 +390,8 @@ router.post('/import-pdf',
       const ofsEncontradas = [];
       const erros = [];
 
-      // Mostrar primeiras 30 linhas para debug
-      lines.slice(0, 30).forEach((line, index) => {
+      // Mostrar primeiras 100 linhas para debug
+      lines.slice(0, 100).forEach((line, index) => {
         console.log(`\nLinha ${index + 1} (${line.length} chars):`);
         console.log(`  Conteúdo: "${line}"`);
         console.log(`  Primeiro char code: ${line.charCodeAt(0) || 'vazio'}`);
@@ -398,15 +404,14 @@ router.post('/import-pdf',
       console.log('========================================');
 
       // ===================================
-      // REGEX CORRIGIDO PARA FORMATO REAL
+      // REGEX PARA MÚLTIPLOS FORMATOS
       // ===================================
-      // Formato real do PDF (logs mostraram):
-      // Linha 1: 010928   01805ATIVOPOLO MASC MC CINZA CHUMBO MOTORISTA JAMEF2
-      // Linha 2: 11/09/2025
-      // Pattern: [OF:6dig][ESPAÇOS][REF:5dig][STATUS][DESCRIÇÃO][QTD]
-      // DATA está em LINHA SEPARADA!
+      // Formato ACABAMENTO: 010928   01805ATIVOPOLO MASC MC CINZA CHUMBO MOTORISTA JAMEF2
+      // Formato COSTURA: 01082601586ATIVOBLUSA DE MOLETOM C. CAPUZ GRAFITE DCJ8
+      //                  P301153600509ATIVOPOLO UNIS ML VERMELHA HYDRO4
+      // Pattern: [OF: pode ter letras][REF:5dig][STATUS][DESCRIÇÃO][QTD no final]
 
-      const regexOF = /^(\d{6})\s+(\d{5})(ATIVO|INATIVO|PRODUCAO)(.+?)(\d+)$/gim;
+      const regexOF = /^([A-Z]*\d+)\s*(\d{5})(ATIVO|INATIVO|PRODUCAO)(.+?)(\d+)$/gim;
 
       let match;
       let matchCount = 0;
@@ -493,7 +498,8 @@ router.post('/import-confirm',
   [
     body('ofs').isArray().withMessage('ofs deve ser um array'),
     body('ofs.*.codigo').notEmpty(),
-    body('ofs.*.quantidade').isInt({ min: 1 })
+    body('ofs.*.quantidade').isInt({ min: 1 }),
+    body('modulo_id').optional().isInt()
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -502,7 +508,7 @@ router.post('/import-confirm',
     }
 
     try {
-      const { ofs } = req.body;
+      const { ofs, modulo_id } = req.body;
 
       console.log(`📦 Processando ${ofs.length} OFs em lote (importação inteligente)...`);
 
@@ -608,6 +614,7 @@ router.post('/import-confirm',
 
             if (ofData.referencia) insertData.referencia = ofData.referencia;
             if (ofData.descricao) insertData.descricao = ofData.descricao;
+            if (modulo_id) insertData.modulo_id = modulo_id;
 
             const { data: novaOf, error: insertError } = await supabaseAdmin
               .from('ofs')

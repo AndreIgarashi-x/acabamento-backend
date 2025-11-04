@@ -51,7 +51,7 @@ router.post('/login',
       console.log('🔍 Buscando usuário no banco...');
       const { data: user, error: userError } = await supabaseAdmin
         .from('users')
-        .select('id, nome, matricula, email, pin_hash, perfil, ativo')
+        .select('id, nome, matricula, email, pin_hash, perfil, ativo, modulos_permitidos')
         .eq('matricula', matricula)
         .single();
 
@@ -131,7 +131,8 @@ router.post('/login',
             nome: user.nome,
             matricula: user.matricula,
             email: user.email,
-            perfil: user.perfil
+            perfil: user.perfil,
+            modulos_permitidos: user.modulos_permitidos || ['acabamento']
           },
           token
         }
