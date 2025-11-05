@@ -9,13 +9,25 @@ const { authenticateToken } = require('../middlewares/auth');
 // Gerar relatório completo de todos os produtos
 router.get('/completo/pdf', authenticateToken, async (req, res) => {
   try {
-    console.log('📄 Gerando relatório completo de produção...');
+    const { modulo_id } = req.query;
 
-    // PASSO 1: Buscar todas as OFs que tiveram produção
-    const { data: ofs, error: ofsError } = await supabaseAdmin
+    console.log('📄 Gerando relatório completo de produção...');
+    if (modulo_id) {
+      console.log(`🎯 Filtrando por módulo ID: ${modulo_id}`);
+    }
+
+    // PASSO 1: Buscar todas as OFs que tiveram produção (filtrar por módulo se fornecido)
+    let queryOfs = supabaseAdmin
       .from('ofs')
-      .select('id, codigo, referencia, descricao')
+      .select('id, codigo, referencia, descricao, modulo_id')
       .order('referencia');
+
+    // Filtrar por módulo se fornecido
+    if (modulo_id) {
+      queryOfs = queryOfs.eq('modulo_id', modulo_id);
+    }
+
+    const { data: ofs, error: ofsError } = await queryOfs;
 
     if (ofsError) {
       console.error('❌ Erro ao buscar OFs:', ofsError);
@@ -31,8 +43,8 @@ router.get('/completo/pdf', authenticateToken, async (req, res) => {
     const produtoComProducao = [];
 
     for (const of of ofs) {
-      // Buscar atividades dessa OF
-      const { data: atividades, error: atError } = await supabaseAdmin
+      // Buscar atividades dessa OF (filtrar processos por módulo se fornecido)
+      let queryAtividades = supabaseAdmin
         .from('activities')
         .select(`
           id,
@@ -42,7 +54,7 @@ router.get('/completo/pdf', authenticateToken, async (req, res) => {
           ts_fim,
           pecas_concluidas,
           tempo_total_seg,
-          processes!inner(nome),
+          processes!inner(nome, modulo_id),
           users!inner(nome, matricula),
           pecas_registradas(
             id,
@@ -51,6 +63,13 @@ router.get('/completo/pdf', authenticateToken, async (req, res) => {
         `)
         .eq('of_id', of.id)
         .not('ts_fim', 'is', null);
+
+      // Filtrar processos por módulo se fornecido
+      if (modulo_id) {
+        queryAtividades = queryAtividades.eq('processes.modulo_id', modulo_id);
+      }
+
+      const { data: atividades, error: atError } = await queryAtividades;
 
       // Se não tem atividades, pula essa OF
       if (!atividades || atividades.length === 0) {
