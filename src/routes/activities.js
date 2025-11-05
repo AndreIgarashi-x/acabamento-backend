@@ -53,7 +53,7 @@ router.post('/start',
       // 1. Verificar se usuário existe e está ativo
       const { data: user, error: userError } = await supabaseAdmin
         .from('users')
-        .select('id, nome, ativo')
+        .select('id, nome, ativo, matricula')
         .eq('id', user_id)
         .single();
 
@@ -69,6 +69,13 @@ router.post('/start',
           success: false,
           message: 'Usuário inativo'
         });
+      }
+
+      // 🎭 MODO DEMO: Verificar se é usuário de demonstração
+      const isDemoUser = user.matricula && user.matricula.startsWith('DEMO.');
+      if (isDemoUser) {
+        console.log('🎭 MODO DEMO ATIVADO - Usuário:', user.matricula);
+        console.log('   As atividades serão simuladas, mas NÃO serão gravadas no banco.');
       }
 
       // 2. Verificar se já tem sessão ativa para este usuário
@@ -154,45 +161,74 @@ router.post('/start',
       }
 
       // 5. Criar a atividade com novos campos para tracking peça a peça
-      const { data: activity, error: createError } = await supabaseAdmin
-        .from('activities')
-        .insert({
+      let activity;
+
+      if (isDemoUser) {
+        // 🎭 MODO DEMO: Simular atividade sem salvar no banco
+        console.log('🎭 DEMO: Simulando criação de atividade (NÃO será salva)');
+        activity = {
+          id: `demo-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, // ID fictício
           user_id,
           process_id,
           of_id,
           qty_planejada,
           status: 'ativa',
-          em_andamento: true,  // NOVO CAMPO
-          pecas_concluidas: 0,  // NOVO CAMPO
+          em_andamento: true,
+          pecas_concluidas: 0,
           ts_inicio: new Date().toISOString(),
           origem_device_id: device_id || 'unknown',
-          audit: JSON.stringify({
-            created_by: user_id,
-            created_at: new Date().toISOString()
+          users: { nome: user.nome },
+          processes: { nome: process.nome },
+          ofs: { codigo: of.codigo, quantidade: of.quantidade }
+        };
+        console.log('✅ DEMO: Atividade simulada:', activity.id);
+      } else {
+        // MODO NORMAL: Salvar no banco
+        const { data: createdActivity, error: createError } = await supabaseAdmin
+          .from('activities')
+          .insert({
+            user_id,
+            process_id,
+            of_id,
+            qty_planejada,
+            status: 'ativa',
+            em_andamento: true,  // NOVO CAMPO
+            pecas_concluidas: 0,  // NOVO CAMPO
+            ts_inicio: new Date().toISOString(),
+            origem_device_id: device_id || 'unknown',
+            audit: JSON.stringify({
+              created_by: user_id,
+              created_at: new Date().toISOString()
+            })
           })
-        })
-        .select('*, users(nome), processes(nome), ofs(codigo, quantidade)')
-        .single();
+          .select('*, users(nome), processes(nome), ofs(codigo, quantidade)')
+          .single();
 
-      if (createError) {
-        console.error('❌ Erro ao criar atividade:', createError);
-        throw createError;
+        if (createError) {
+          console.error('❌ Erro ao criar atividade:', createError);
+          throw createError;
+        }
+
+        activity = createdActivity;
+        console.log('✅ Atividade criada:', activity.id);
       }
 
-      console.log('✅ Atividade criada:', activity.id);
-
       // 6. ATUALIZAR STATUS DA OF PARA "EM_ANDAMENTO"
-      console.log('🔄 Atualizando OF para em_andamento:', of_id);
+      if (!isDemoUser) {
+        console.log('🔄 Atualizando OF para em_andamento:', of_id);
 
-      const { error: ofUpdateError } = await supabaseAdmin
-        .from('ofs')
-        .update({ status: 'em_andamento' })
-        .eq('id', of_id);
+        const { error: ofUpdateError } = await supabaseAdmin
+          .from('ofs')
+          .update({ status: 'em_andamento' })
+          .eq('id', of_id);
 
-      if (ofUpdateError) {
-        console.error('❌ Erro ao atualizar OF:', ofUpdateError);
+        if (ofUpdateError) {
+          console.error('❌ Erro ao atualizar OF:', ofUpdateError);
+        } else {
+          console.log('✅ OF atualizada para em_andamento com sucesso!');
+        }
       } else {
-        console.log('✅ OF atualizada para em_andamento com sucesso!');
+        console.log('🎭 DEMO: Pulando atualização da OF');
       }
 
       res.status(201).json({
@@ -230,7 +266,25 @@ router.post('/:id/registrar-peca',
 
       console.log('📦 REGISTRANDO PEÇA:', { atividade_id: id, numero_peca, tempo_decorrido });
 
-      // 1. Buscar atividade
+      // 🎭 Verificar se é atividade DEMO
+      const isDemoActivity = id.startsWith('demo-');
+
+      if (isDemoActivity) {
+        console.log('🎭 DEMO: Simulando registro de peça (NÃO será salva)');
+        return res.status(201).json({
+          success: true,
+          message: 'Peça registrada com sucesso (DEMO)',
+          data: {
+            id: `demo-peca-${Date.now()}`,
+            atividade_id: id,
+            numero_peca,
+            tempo_decorrido,
+            timestamp_conclusao: new Date().toISOString()
+          }
+        });
+      }
+
+      // 1. Buscar atividade (modo normal)
       const { data: activity, error: findError } = await supabaseAdmin
         .from('activities')
         .select('*')
